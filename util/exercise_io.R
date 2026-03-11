@@ -9,13 +9,19 @@ load_ex_index <- function(app_root) {
 }
 
 make_exercise_choices <- function(ex_index) {
-  items <- list()
+  # Shiny selectInput expects names as labels and values as submitted values.
+  # We submit exercise id and display topic+title.
+  labels <- c()
+  values <- c()
+
   for (topic in names(ex_index)) {
     for (it in ex_index[[topic]]) {
-      items[[it$id]] <- paste0("[", topic, "] ", it$title)
+      labels <- c(labels, paste0("[", topic, "] ", it$title))
+      values <- c(values, it$id)
     }
   }
-  unlist(items, use.names = TRUE)
+
+  stats::setNames(values, labels)
 }
 
 load_exercise <- function(app_root, ex_index, ex_id) {
@@ -38,5 +44,6 @@ load_exercise <- function(app_root, ex_index, ex_id) {
       }
     }
   }
-  stop("Exercise not found: ", ex_id)
+  known_ids <- unlist(lapply(ex_index, function(topic_items) vapply(topic_items, function(x) x$id, character(1))))
+  stop("Exercise not found: ", ex_id, " (known ids: ", paste(known_ids, collapse = ", "), ")")
 }
