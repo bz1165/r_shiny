@@ -1,0 +1,11 @@
+id: ex001_add_row
+title: "Add one row (N) under label row"
+description: |
+  Build a table with:
+  - Columns split by ARM + Overall
+  - A label row "Sex – n (%)"
+  - Content rows for SEX with n (%)
+  - Add an extra row "N" under the label row showing the column total N.
+starter_file: "ex001_add_row_starter.R"
+reference_file: "ex001_add_row_reference.R"
+timeout_sec: 5
