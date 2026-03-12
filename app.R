@@ -1,9 +1,13 @@
 suppressPackageStartupMessages({
   library(shiny)
-  library(shinyAce)
   library(yaml)
   library(htmltools)
 })
+
+HAS_SHINYACE <- requireNamespace("shinyAce", quietly = TRUE)
+if (HAS_SHINYACE) {
+  suppressPackageStartupMessages(library(shinyAce))
+}
 
 source("util/config.R")
 source("util/exercise_io.R")
@@ -15,8 +19,61 @@ source("util/save_submission.R")
 ex_index <- load_ex_index(CONFIG$APP_ROOT)
 choices <- make_exercise_choices(ex_index)
 
+code_input_ui <- function(id, value = "") {
+  if (HAS_SHINYACE) {
+    return(aceEditor(
+      id,
+      mode = "r",
+      theme = "chrome",
+      height = "520px",
+      fontSize = 14,
+      value = value
+    ))
+  }
+
+  textAreaInput(
+    id,
+    label = NULL,
+    value = value,
+    width = "100%",
+    height = "520px",
+    resize = "vertical"
+  )
+}
+
+reference_ui <- function(id, value = "") {
+  if (HAS_SHINYACE) {
+    return(aceEditor(
+      id,
+      mode = "r",
+      theme = "chrome",
+      height = "280px",
+      fontSize = 13,
+      readOnly = TRUE,
+      value = value
+    ))
+  }
+
+  div(
+    class = "ref-fallback",
+    tags$pre(style = "margin:0; white-space:pre-wrap;", value)
+  )
+}
+
+update_code_input <- function(session, id, value) {
+  if (HAS_SHINYACE) {
+    updateAceEditor(session, id, value = value)
+  } else {
+    updateTextAreaInput(session, id, value = value)
+  }
+}
+
+get_code_input <- function(input, id) {
+  input[[id]] %||% ""
+}
+
 ui <- fluidPage(
-  tags$head(tags$style(HTML("\n    .ref-grey .ace_content, .ref-grey .ace_scroller { color: #6b7280 !important; }\n    .muted { color:#6b7280; }\n    .box { border:1px solid #e5e7eb; border-radius:10px; padding:12px; margin-bottom:12px; }\n    .btnrow { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }\n    .small { font-size:12px; color:#6b7280; }\n  "))),
+  tags$head(tags$style(HTML("\n    .ref-grey .ace_content, .ref-grey .ace_scroller { color: #6b7280 !important; }\n    .muted { color:#6b7280; }\n    .box { border:1px solid #e5e7eb; border-radius:10px; padding:12px; margin-bottom:12px; }\n    .btnrow { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }\n    .small { font-size:12px; color:#6b7280; }\n    .ref-fallback { border:1px solid #d1d5db; border-radius:6px; padding:8px; background:#f9fafb; color:#6b7280; max-height:280px; overflow:auto; }\n  "))),
 
   titlePanel("CSRTRAIN — R Training Playground"),
 
@@ -36,6 +93,8 @@ ui <- fluidPage(
           tags$hr(),
           checkboxInput("show_ref", "Show reference code (read-only)", value = FALSE),
           div(class = "small",
+              if (!HAS_SHINYACE) "shinyAce not found: using base textarea fallback.",
+              tags$br(),
               "Reference/starter files include setup header for copy-paste run.",
               tags$br(),
               "Saved to: ", tags$code(CONFIG$SAVE_ROOT))
@@ -46,13 +105,13 @@ ui <- fluidPage(
       5,
       div(class = "box",
           h4("Your code"),
-          aceEditor("editor", mode = "r", theme = "chrome", height = "520px", fontSize = 14, value = "")
+          code_input_ui("editor", value = "")
       ),
       conditionalPanel(
         condition = "input.show_ref == true",
         div(class = "box ref-grey",
             h4("Reference code (read-only)"),
-            aceEditor("ref", mode = "r", theme = "chrome", height = "280px", fontSize = 13, readOnly = TRUE, value = "")
+            uiOutput("reference_panel")
         )
       )
     ),
@@ -79,9 +138,15 @@ server <- function(input, output, session) {
     u
   })
 
+  ref_code <- reactiveVal("")
+
   current_ex <- reactive({
     req(input$ex_id)
     load_exercise(CONFIG$APP_ROOT, ex_index, input$ex_id)
+  })
+
+  output$reference_panel <- renderUI({
+    reference_ui("ref", value = ref_code())
   })
 
   observeEvent(current_ex(), {
@@ -90,8 +155,11 @@ server <- function(input, output, session) {
     starter_txt <- readLines(ex$starter_file, warn = FALSE)
     ref_txt <- readLines(ex$reference_file, warn = FALSE)
 
-    updateAceEditor(session, "editor", value = paste(starter_txt, collapse = "\n"))
-    updateAceEditor(session, "ref", value = paste(ref_txt, collapse = "\n"))
+    starter_code <- paste(starter_txt, collapse = "\n")
+    reference_code <- paste(ref_txt, collapse = "\n")
+
+    update_code_input(session, "editor", starter_code)
+    ref_code(reference_code)
 
     output$ex_desc <- renderUI({
       div(
@@ -106,7 +174,7 @@ server <- function(input, output, session) {
 
   observeEvent(input$run, {
     ex <- current_ex()
-    out <- run_user_code(input$editor, timeout_sec = ex$timeout_sec)
+    out <- run_user_code(get_code_input(input, "editor"), timeout_sec = ex$timeout_sec)
 
     if (!out$ok) {
       output$result <- renderText(out$msg)
@@ -120,7 +188,7 @@ server <- function(input, output, session) {
 
   observeEvent(input$submit, {
     ex <- current_ex()
-    out <- run_user_code(input$editor, timeout_sec = ex$timeout_sec)
+    out <- run_user_code(get_code_input(input, "editor"), timeout_sec = ex$timeout_sec)
 
     if (!out$ok) {
       output$result <- renderText(out$msg)
@@ -141,7 +209,7 @@ server <- function(input, output, session) {
 
   observeEvent(input$save, {
     ex <- current_ex()
-    saved <- save_submission(CONFIG$SAVE_ROOT, user_id(), ex$id, input$editor)
+    saved <- save_submission(CONFIG$SAVE_ROOT, user_id(), ex$id, get_code_input(input, "editor"))
     output$result <- renderText(paste0("Saved to:\n", saved))
   })
 }
