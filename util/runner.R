@@ -9,7 +9,9 @@ make_training_wd <- function() {
 }
 
 eval_in_training_env <- function(code, timeout_sec = 5) {
-  env <- new.env(parent = emptyenv())
+  # Use baseenv() so core language/base functions are available when sourcing
+  # company setup scripts (e.g., `if`, `library`, `getOption`).
+  env <- new.env(parent = baseenv())
   env$wd <- make_training_wd()
 
   block <- function(...) stop("Blocked in training sandbox.")
