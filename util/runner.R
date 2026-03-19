@@ -8,7 +8,7 @@ make_training_wd <- function() {
   file.path(CONFIG$TRAINING_RA_ROOT, "pgm", "shiny_runner.R")
 }
 
-eval_in_training_env <- function(code, timeout_sec = 5) {
+eval_in_training_env <- function(code, timeout_sec = 5, setup_timeout_sec = 30) {
   # Use baseenv() so core language/base functions are available when sourcing
   # company setup scripts (e.g., `if`, `library`, `getOption`).
   env <- new.env(parent = baseenv())
@@ -20,13 +20,31 @@ eval_in_training_env <- function(code, timeout_sec = 5) {
   env$unlink <- block
   env$file.remove <- block
 
-  setTimeLimit(elapsed = timeout_sec, transient = TRUE)
-  on.exit(setTimeLimit(elapsed = Inf, transient = FALSE), add = TRUE)
+  # Compatibility fallback for environments where conflicted::conflict_prefer
+  # is unavailable but referenced in company setup scripts.
+  if (!exists("conflict_prefer", mode = "function", inherits = TRUE)) {
+    env$conflict_prefer <- function(...) invisible(NULL)
+  }
 
   setup_path <- file.path(CONFIG$TRAINING_RA_ROOT, "util", "_setup.R")
-  sys.source(setup_path, envir = env)
+
+  setup_res <- tryCatch({
+    setTimeLimit(elapsed = setup_timeout_sec, transient = TRUE)
+    on.exit(setTimeLimit(elapsed = Inf, transient = FALSE), add = TRUE)
+    sys.source(setup_path, envir = env)
+    NULL
+  }, error = function(e) {
+    conditionMessage(e)
+  })
+
+  if (!is.null(setup_res)) {
+    return(list(ok = FALSE, value = NULL, env = env, error = paste0("Setup failed: ", setup_res)))
+  }
 
   tryCatch({
+    setTimeLimit(elapsed = timeout_sec, transient = TRUE)
+    on.exit(setTimeLimit(elapsed = Inf, transient = FALSE), add = TRUE)
+
     val <- eval(parse(text = code), envir = env)
     list(ok = TRUE, value = val, env = env, error = NULL)
   }, error = function(e) {
