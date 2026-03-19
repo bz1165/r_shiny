@@ -1,0 +1,4 @@
+rtables:
+  - id: ex001_add_row
+    title: "Ex001 — Add one row (N) under a label row"
+    yml: "exercises/rtables/ex001_add_row.yml"
