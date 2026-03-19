@@ -9,9 +9,12 @@ make_training_wd <- function() {
 }
 
 eval_in_training_env <- function(code, timeout_sec = 5, setup_timeout_sec = 30) {
-  # Use baseenv() so core language/base functions are available when sourcing
-  # company setup scripts (e.g., `if`, `library`, `getOption`).
-  env <- new.env(parent = baseenv())
+  # Use a compatibility parent environment so sourced setup/helper scripts can
+  # resolve base functions plus optional compatibility shims.
+  compat_env <- new.env(parent = baseenv())
+  compat_env$conflict_prefer <- function(...) invisible(NULL)
+
+  env <- new.env(parent = compat_env)
   env$wd <- make_training_wd()
 
   block <- function(...) stop("Blocked in training sandbox.")
@@ -20,10 +23,12 @@ eval_in_training_env <- function(code, timeout_sec = 5, setup_timeout_sec = 30) 
   env$unlink <- block
   env$file.remove <- block
 
-  # Compatibility fallback for environments where conflicted::conflict_prefer
-  # is unavailable but referenced in company setup scripts.
-  if (!exists("conflict_prefer", mode = "function", inherits = TRUE)) {
-    env$conflict_prefer <- function(...) invisible(NULL)
+  # Some setup files source additional scripts in environments that may resolve
+  # through .GlobalEnv; provide a temporary fallback there as well.
+  had_global_conflict_prefer <- exists("conflict_prefer", envir = .GlobalEnv, inherits = FALSE)
+  if (!had_global_conflict_prefer) {
+    assign("conflict_prefer", function(...) invisible(NULL), envir = .GlobalEnv)
+    on.exit(rm("conflict_prefer", envir = .GlobalEnv), add = TRUE)
   }
 
   setup_path <- file.path(CONFIG$TRAINING_RA_ROOT, "util", "_setup.R")
