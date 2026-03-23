@@ -4,7 +4,7 @@ wd <- ifelse(
   rstudioapi::getSourceEditorContext()$path,
   system("echo $PWD", intern = TRUE)
 )
-source(paste0(gsub(r"((^.*/vob(/\w+){3}).*$)", r"(\1)", wd), "/util/_setup.R"))
+
 
 # Exercise ---------------------------------------------------------------------
 # Goal:
