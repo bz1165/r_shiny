@@ -1,4 +1,8 @@
 rtables:
-  - id: ex001_add_row
-    title: "Ex001 — Add one row (N) under a label row"
-    yml: "exercises/rtables/ex001_add_row.yml"
+  - id: ex101_analysis_sets
+    title: "Ex101 — Analysis sets (RAS / FAS / SAF / OLS)"
+    yml: "exercises/rtables/ex101_analysis_sets.yml"
+
+  - id: ex201_teae_socpt
+    title: "Ex201 — TEAE by SOC/PT"
+    yml: "exercises/rtables/ex201_teae_socpt.yml"
