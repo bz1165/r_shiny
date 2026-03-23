@@ -1,11 +1,11 @@
-id: ex001_add_row
-title: "Add one row (N) under label row"
+id: ex001_basic_split_cols
+title: "Step 4.2 — Add treatment columns"
 description: |
-  Build a table with:
-  - Columns split by ARM + Overall
-  - A label row "Sex – n (%)"
-  - Content rows for SEX with n (%)
-  - Add an extra row "N" under the label row showing the column total N.
-starter_file: "ex001_add_row_starter.R"
-reference_file: "ex001_add_row_reference.R"
-timeout_sec: 5
+  Build the simplest table with treatment columns.
+  Goal:
+  - start from basic_table()
+  - split columns by ARM
+  - return the built table object
+starter_file: "ex001_basic_split_cols_starter.R"
+reference_file: "ex001_basic_split_cols_reference.R"
+timeout_sec: 10
