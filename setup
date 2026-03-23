@@ -1,96 +1,9 @@
-#==============================================================================================================
-# FILENAME    : _setup.R
-# DESCRIPTION : Minimal setup for training app usage (analysis/derived only)
-# NOTES       : Place this file under <RA_ROOT>/util/_setup.R (or utils/_setup.R)
-#==============================================================================================================
-
-cat(paste(c("The library dictionaries within which packages are looked for:", .libPaths(), "\n"), collapse = "\n"))
-
-suppressPackageStartupMessages({
-  library(conflicted)
-  library(data.table)
-  library(tidyverse)
-  library(haven)
-  library(reporter)
-  library(arsenal)
-})
-
-# conflict policy
-conflict_prefer("filter", "dplyr")
-conflict_prefer("lag", "dplyr")
-conflict_prefer("select", "dplyr")
-
-# wd must exist (runner injects it). Keep fallback for local interactive run.
-if (!exists("wd", inherits = FALSE)) {
-  wd <- ifelse(
-    interactive(),
-    rstudioapi::getSourceEditorContext()$path,
-    system("echo $PWD", intern = TRUE)
-  )
-}
-
-# Load company general functions (support both util/ and utils/ layouts)
-ra_root <- gsub(r"((^.*/vob(/\w+){3}).*$)", r"(\1)", wd)
-funcs_general_path <- c(
-  file.path(ra_root, "util", "funcs_general.R"),
-  file.path(ra_root, "utils", "funcs_general.R"),
-  file.path(ra_root, "util", "funcs.R"),
-  file.path(ra_root, "utils", "funcs.R")
-)
-funcs_general_path <- funcs_general_path[file.exists(funcs_general_path)][1]
-if (is.na(funcs_general_path) || !nzchar(funcs_general_path)) {
-  stop("Cannot find funcs_general.R/funcs.R under util/ or utils/.")
-}
-source(funcs_general_path)
-
-# Backward-compatible alias: some scripts use setup_paths()
-if (!exists("setup_paths", inherits = TRUE) && exists("set_paths", inherits = TRUE)) {
-  setup_paths <- set_paths
-}
-
-# Set absolute study/report paths
-st <- set_paths(wd)   # (or st <- setup_paths(wd))
-
-# Ensure analysis/derived point to training RA folders
-if (is.null(st$analysis) || !nzchar(st$analysis)) st$analysis <- file.path(st$genpgm, "analysis_data/")
-if (is.null(st$derived)  || !nzchar(st$derived))  st$derived  <- file.path(st$genpgm, "derived_data/")
-
-# Optional helpers: provide read_sas2(x) for objects like analysis.adsl / derived.adae
-read_sas2 <- function(lib_data_symbol) {
-  sym <- deparse(substitute(lib_data_symbol))
-  parts <- strsplit(sym, "\\.")[[1]]
-  if (length(parts) != 2) stop("Use syntax like read_sas2(analysis.adsl)")
-  lib <- parts[1]
-  dat <- parts[2]
-  if (!lib %in% names(st)) stop(sprintf("Library '%s' not found in st", lib))
-
-  candidates <- c(
-    file.path(st[[lib]], paste0(dat, ".sas7bdat")),
-    file.path(st[[lib]], paste0(dat, ".xpt")),
-    file.path(st[[lib]], paste0(dat, ".rds"))
-  )
-  hit <- candidates[file.exists(candidates)][1]
-  if (is.na(hit) || !nzchar(hit)) stop(sprintf("No file found for %s in %s", sym, st[[lib]]))
-
-  ext <- tolower(tools::file_ext(hit))
-  if (ext == "sas7bdat") return(haven::read_sas(hit))
-  if (ext == "xpt") return(haven::read_xpt(hit))
-  readRDS(hit)
-}
-
-cat("_setup.R executing done -------------------------------------------------\n")
-
-
-
-
 # Information Head -------------------------------------------------------------
 #            FILENAME : _setup.R
-#         DESCRIPTION : setup for R programming
-#               NOTES : copy to your RA folder, and use code below in the individual program to execute it.
+#         DESCRIPTION : setup for R programming (Training minimal: analysis/derived only)
+#               NOTES : copy to your RA util folder, and use code below in the individual program to execute it.
 #  wd <- ifelse(interactive(),rstudioapi::getSourceEditorContext()$path,system("echo $PWD",intern=TRUE))
 #  source(paste0(gsub(r"((^.*/vob(/\w+){3}).*$)",r"(\1)",wd), "/util/_setup.R"))
-#
-#  See detailed instruction in https://rsconnect-prod.dit.eu.novartis.net/content/3484/setup-and-execution.html#setup.r
 #
 #  PROGRAMMING MODIFICATIONS HISTORY
 #  DATE        PROGRAMMER           DESCRIPTION
@@ -100,8 +13,9 @@ cat("_setup.R executing done -------------------------------------------------\n
 
 
 # Load R packages --------------------------------------------
-cat(paste(c("The library dictionaries within which packages are looked for:",.libPaths(),"\n"), collapse='\n'))
+cat(paste(c("The library dictionaries within which packages are looked for:", .libPaths(), "\n"), collapse = "\n"))
 
+# Prefer conflicted rules (company standard)
 conflicted::conflicts_prefer(dplyr::between)
 conflicted::conflicts_prefer(dplyr::filter)
 conflicted::conflicts_prefer(dplyr::first)
@@ -121,29 +35,50 @@ conflicted::conflicts_prefer(lubridate::yday)
 conflicted::conflicts_prefer(lubridate::year)
 conflicted::conflicts_prefer(purrr::transpose)
 conflicted::conflicts_prefer(arsenal::`labels<-`)
-library(data.table)
-library(arsenal)
-library(tidyverse)
-library(haven)
-library(reporter)
 
-cat(paste0("Executing at ", date(),"\n"))
+suppressPackageStartupMessages({
+  library(conflicted)
+  library(data.table)
+  library(arsenal)
+  library(tidyverse)
+  library(haven)
+  library(reporter)
+})
+
+cat(paste0("Executing at ", date(), "\n"))
 print(sessionInfo())
 
-# Load general functions -------------------------------------------------------
-source(paste0(gsub(r"((^.*/vob(/\w+){3}).*$)",r"(\1)",wd), "/util/funcs_general.R"))
+# wd must exist ---------------------------------------------------------------
+if (!exists("wd", inherits = TRUE)) {
+  stop("_setup.R requires object `wd`. Please define wd in your program before sourcing _setup.R.")
+}
 
-# Set absolute paths to RA and other locations
+# Load general functions -------------------------------------------------------
+# IMPORTANT: use sys.source(..., envir = environment()) so functions are available
+# in the same environment (works for both RStudio and Shiny runner sandbox).
+ra_root <- gsub(r"((^.*/vob(/\w+){3}).*$)", r"(\1)", wd)
+funcs_general <- file.path(ra_root, "util", "funcs_general.R")
+if (!file.exists(funcs_general)) {
+  stop(paste0("Cannot find funcs_general.R at: ", funcs_general))
+}
+sys.source(funcs_general, envir = environment())
+
+# Backward-compatible alias (if any legacy code uses setup_paths) -------------
+if (!exists("setup_paths", inherits = TRUE) && exists("set_paths", inherits = TRUE)) {
+  setup_paths <- set_paths
+}
+
+# Set absolute paths to RA and other locations --------------------------------
 st <- set_paths(wd)
 
-# Load other functions and define objects as study needs  ----------------------
-#source(paste0(st$rautil, "funcs_ars.R"))
-#st$cutoffdt <- as_date("2025-11-12", tz='UTC')
+# Ensure analysis/derived are available (training requirement) -----------------
+# analysis = ADaM folder, derived = SDTM folder
+# If reflib/set_paths already provides them, keep; otherwise default to RA folders.
+if (is.null(st$analysis) || !nzchar(st$analysis)) st$analysis <- paste0(st$genpgm, "analysis_data/")
+if (is.null(st$derived)  || !nzchar(st$derived))  st$derived  <- paste0(st$genpgm, "derived_data/")
 
-
-
-
-
-
+# Optional: keep short aliases (safe; doesn't affect company funcs) -----------
+if (is.null(st$adam)) st$adam <- st$analysis
+if (is.null(st$sdtm)) st$sdtm <- st$derived
 
 cat("_setup.R executing done -------------------------------------------------\n")
