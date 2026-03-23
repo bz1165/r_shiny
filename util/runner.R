@@ -1,141 +1,217 @@
 suppressPackageStartupMessages({
-  library(rtables)
+  library(shiny)
+  library(yaml)
+  library(htmltools)
 })
 
+HAS_SHINYACE <- requireNamespace("shinyAce", quietly = TRUE)
+if (HAS_SHINYACE) {
+  suppressPackageStartupMessages(library(shinyAce))
+}
+
 source("util/config.R")
+source("util/exercise_io.R")
+source("util/runner.R")
+source("util/grading_rtables.R")
+source("util/render_rtables.R")
+source("util/save_submission.R")
 
-.RUNNER_SETUP_CACHE <- new.env(parent = emptyenv())
+ex_index <- load_ex_index(CONFIG$APP_ROOT)
+choices <- make_exercise_choices(ex_index)
 
-make_training_wd <- function() {
-  file.path(CONFIG$TRAINING_RA_ROOT, "pgm", "shiny_runner.R")
-}
-
-first_existing_path <- function(paths) {
-  hit <- paths[file.exists(paths)][1]
-  if (is.na(hit) || !nzchar(hit)) return(NULL)
-  hit
-}
-
-load_setup_env <- function(setup_timeout_sec = 30, force_reload = FALSE) {
-  cache_key <- gsub("[^A-Za-z0-9_]", "_", CONFIG$TRAINING_RA_ROOT)
-  if (!force_reload && exists(cache_key, envir = .RUNNER_SETUP_CACHE, inherits = FALSE)) {
-    return(get(cache_key, envir = .RUNNER_SETUP_CACHE, inherits = FALSE))
-  }
-
-  compat_env <- new.env(parent = baseenv())
-  compat_env$conflict_prefer <- function(...) invisible(NULL)
-
-  setup_env <- new.env(parent = compat_env)
-  setup_env$wd <- make_training_wd()
-
-  # Make conflict_prefer visible for setup scripts that resolve in .GlobalEnv.
-  had_global_conflict_prefer <- exists("conflict_prefer", envir = .GlobalEnv, inherits = FALSE)
-  if (!had_global_conflict_prefer) {
-    assign("conflict_prefer", function(...) invisible(NULL), envir = .GlobalEnv)
-    on.exit(rm("conflict_prefer", envir = .GlobalEnv), add = TRUE)
-  }
-
-  funcs_general_path <- first_existing_path(c(
-    file.path(CONFIG$TRAINING_RA_ROOT, "util", "funcs_general.R"),
-    file.path(CONFIG$TRAINING_RA_ROOT, "utils", "funcs_general.R"),
-    file.path(CONFIG$TRAINING_RA_ROOT, "util", "funcs.R"),
-    file.path(CONFIG$TRAINING_RA_ROOT, "utils", "funcs.R")
-  ))
-
-  setup_path <- first_existing_path(c(
-    file.path(CONFIG$TRAINING_RA_ROOT, "util", "_setup.R"),
-    file.path(CONFIG$TRAINING_RA_ROOT, "utils", "_setup.R")
-  ))
-
-  if (is.null(setup_path)) {
-    stop("Setup failed: cannot find _setup.R under util/ or utils/ in TRAINING_RA_ROOT.")
-  }
-
-  setup_res <- tryCatch({
-    setTimeLimit(elapsed = setup_timeout_sec, transient = TRUE)
-    on.exit(setTimeLimit(elapsed = Inf, transient = FALSE), add = TRUE)
-
-    # Preload general function file if found. This prevents set_paths() missing
-    # when setup scripts expect a different util/utils folder layout.
-    if (!is.null(funcs_general_path)) {
-      sys.source(funcs_general_path, envir = setup_env)
-    }
-
-    sys.source(setup_path, envir = setup_env)
-    NULL
-  }, error = function(e) {
-    conditionMessage(e)
-  })
-
-  if (!is.null(setup_res)) {
-    stop(paste0("Setup failed: ", setup_res))
-  }
-
-  assign(cache_key, setup_env, envir = .RUNNER_SETUP_CACHE)
-  setup_env
-}
-
-eval_in_training_env <- function(code, timeout_sec = 5, setup_timeout_sec = 60) {
-  setup_env <- tryCatch({
-    load_setup_env(setup_timeout_sec = setup_timeout_sec)
-  }, error = function(e) {
-    return(list(ok = FALSE, value = NULL, env = NULL, error = conditionMessage(e)))
-  })
-
-  if (is.list(setup_env) && identical(setup_env$ok, FALSE)) {
-    return(setup_env)
-  }
-
-  env <- new.env(parent = setup_env)
-  env$wd <- make_training_wd()
-
-  block <- function(...) stop("Blocked in training sandbox.")
-  env$system <- block
-  env$system2 <- block
-  env$unlink <- block
-  env$file.remove <- block
-
-  tryCatch({
-    setTimeLimit(elapsed = timeout_sec, transient = TRUE)
-    on.exit(setTimeLimit(elapsed = Inf, transient = FALSE), add = TRUE)
-
-    val <- eval(parse(text = code), envir = env)
-    list(ok = TRUE, value = val, env = env, error = NULL)
-  }, error = function(e) {
-    list(ok = FALSE, value = NULL, env = env, error = conditionMessage(e))
-  })
-}
-
-extract_table <- function(res) {
-  if (!res$ok) return(NULL)
-
-  if (inherits(res$value, "TableTree")) return(res$value)
-
-  if (!is.null(res$env) && exists("tbl", envir = res$env, inherits = FALSE)) {
-    t <- get("tbl", envir = res$env, inherits = FALSE)
-    if (inherits(t, "TableTree")) return(t)
-  }
-
-  NULL
-}
-
-run_user_code <- function(code, timeout_sec = 5) {
-  res <- eval_in_training_env(code, timeout_sec)
-  if (!res$ok) return(list(ok = FALSE, tbl = NULL, msg = res$error))
-
-  tbl <- extract_table(res)
-  if (is.null(tbl)) {
-    return(list(
-      ok = FALSE,
-      tbl = NULL,
-      msg = "Code ran but no rtables TableTree was returned (return tbl or build_table output)."
+code_input_ui <- function(id, value = "") {
+  if (HAS_SHINYACE) {
+    return(aceEditor(
+      id,
+      mode = "r",
+      theme = "chrome",
+      height = "520px",
+      fontSize = 14,
+      value = value
     ))
   }
 
-  list(ok = TRUE, tbl = tbl, msg = "OK")
+  textAreaInput(
+    id,
+    label = NULL,
+    value = value,
+    width = "100%",
+    height = "520px",
+    resize = "vertical"
+  )
 }
 
-run_reference_code <- function(reference_file, timeout_sec = 5) {
-  code <- paste(readLines(reference_file, warn = FALSE), collapse = "\n")
-  run_user_code(code, timeout_sec)
+reference_ui <- function(id, value = "") {
+  if (HAS_SHINYACE) {
+    return(aceEditor(
+      id,
+      mode = "r",
+      theme = "chrome",
+      height = "280px",
+      fontSize = 13,
+      readOnly = TRUE,
+      value = value
+    ))
+  }
+
+  div(
+    class = "ref-fallback",
+    tags$pre(style = "margin:0; white-space:pre-wrap;", value)
+  )
 }
+
+update_code_input <- function(session, id, value) {
+  if (HAS_SHINYACE) {
+    updateAceEditor(session, id, value = value)
+  } else {
+    updateTextAreaInput(session, id, value = value)
+  }
+}
+
+get_code_input <- function(input, id) {
+  input[[id]] %||% ""
+}
+
+ui <- fluidPage(
+  tags$head(tags$style(HTML("\n    .ref-grey .ace_content, .ref-grey .ace_scroller { color: #6b7280 !important; }\n    .muted { color:#6b7280; }\n    .box { border:1px solid #e5e7eb; border-radius:10px; padding:12px; margin-bottom:12px; }\n    .btnrow { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }\n    .small { font-size:12px; color:#6b7280; }\n    .ref-fallback { border:1px solid #d1d5db; border-radius:6px; padding:8px; background:#f9fafb; color:#6b7280; max-height:280px; overflow:auto; }\n  "))),
+
+  titlePanel("CSRTRAIN — R Training Playground"),
+
+  fluidRow(
+    column(
+      3,
+      div(class = "box",
+          h4("Exercise"),
+          selectInput("ex_id", NULL, choices = choices),
+          uiOutput("ex_desc"),
+          tags$hr(),
+          div(class = "btnrow",
+              actionButton("run", "Run (Preview)"),
+              actionButton("submit", "Submit (Grade)", class = "btn-primary"),
+              actionButton("save", "Save code")
+          ),
+          tags$hr(),
+          checkboxInput("show_ref", "Show reference code (read-only)", value = FALSE),
+          div(class = "small",
+              if (!HAS_SHINYACE) "shinyAce not found: using base textarea fallback.",
+              tags$br(),
+              "Reference/starter files include setup header for copy-paste run.",
+              tags$br(),
+              "Saved to: ", tags$code(CONFIG$SAVE_ROOT))
+      )
+    ),
+
+    column(
+      5,
+      div(class = "box",
+          h4("Your code"),
+          code_input_ui("editor", value = "")
+      ),
+      conditionalPanel(
+        condition = "input.show_ref == true",
+        div(class = "box ref-grey",
+            h4("Reference code (read-only)"),
+            uiOutput("reference_panel")
+        )
+      )
+    ),
+
+    column(
+      4,
+      div(class = "box",
+          h4("Table preview"),
+          uiOutput("tbl_preview")
+      ),
+      div(class = "box",
+          h4("Result"),
+          verbatimTextOutput("result")
+      )
+    )
+  )
+)
+
+server <- function(input, output, session) {
+  user_id <- reactive({
+    u <- session$user
+    if (is.null(u) || !nzchar(u)) u <- Sys.info()[["user"]]
+    if (is.null(u) || !nzchar(u)) u <- "unknown_user"
+    u
+  })
+
+  ref_code <- reactiveVal("")
+
+  current_ex <- reactive({
+    req(input$ex_id)
+    load_exercise(CONFIG$APP_ROOT, ex_index, input$ex_id)
+  })
+
+  output$reference_panel <- renderUI({
+    reference_ui("ref", value = ref_code())
+  })
+
+  observeEvent(current_ex(), {
+    ex <- current_ex()
+
+    starter_txt <- readLines(ex$starter_file, warn = FALSE)
+    ref_txt <- readLines(ex$reference_file, warn = FALSE)
+
+    starter_code <- paste(starter_txt, collapse = "\n")
+    reference_code <- paste(ref_txt, collapse = "\n")
+
+    update_code_input(session, "editor", starter_code)
+    ref_code(reference_code)
+
+    output$ex_desc <- renderUI({
+      div(
+        tags$h5(ex$title),
+        div(class = "muted", HTML(gsub("\n", "<br/>", ex$description)))
+      )
+    })
+
+    output$result <- renderText("")
+    output$tbl_preview <- renderUI(tags$em("Run to preview output."))
+  }, ignoreInit = FALSE)
+
+  observeEvent(input$run, {
+    ex <- current_ex()
+    out <- run_user_code(get_code_input(input, "editor"), timeout_sec = ex$timeout_sec)
+
+    if (!out$ok) {
+      output$result <- renderText(out$msg)
+      output$tbl_preview <- renderUI(tags$pre("No table (execution error)."))
+      return()
+    }
+
+    output$result <- renderText("Preview generated. Submit to grade.")
+    output$tbl_preview <- renderUI(render_table_html(out$tbl))
+  })
+
+  observeEvent(input$submit, {
+    ex <- current_ex()
+    out <- run_user_code(get_code_input(input, "editor"), timeout_sec = ex$timeout_sec)
+
+    if (!out$ok) {
+      output$result <- renderText(out$msg)
+      output$tbl_preview <- renderUI(tags$pre("No table (execution error)."))
+      return()
+    }
+
+    ref_out <- run_reference_code(ex$reference_file, timeout_sec = ex$timeout_sec)
+    if (!ref_out$ok) {
+      output$result <- renderText(paste0("Reference failed:\n", ref_out$msg))
+      return()
+    }
+
+    g <- grade_rtables_matrix(out$tbl, ref_out$tbl)
+    output$result <- renderText(g$msg)
+    output$tbl_preview <- renderUI(render_table_html(out$tbl))
+  })
+
+  observeEvent(input$save, {
+    ex <- current_ex()
+    saved <- save_submission(CONFIG$SAVE_ROOT, user_id(), ex$id, get_code_input(input, "editor"))
+    output$result <- renderText(paste0("Saved to:\n", saved))
+  })
+}
+
+shinyApp(ui, server)
