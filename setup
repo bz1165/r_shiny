@@ -43,8 +43,17 @@ if (is.na(funcs_general_path) || !nzchar(funcs_general_path)) {
 }
 source(funcs_general_path)
 
+# Backward-compatible alias: some scripts use setup_paths()
+if (!exists("setup_paths", inherits = TRUE) && exists("set_paths", inherits = TRUE)) {
+  setup_paths <- set_paths
+}
+
 # Set absolute study/report paths
-st <- set_paths(wd)
+st <- set_paths(wd)   # (or st <- setup_paths(wd))
+
+# Ensure analysis/derived point to training RA folders
+if (is.null(st$analysis) || !nzchar(st$analysis)) st$analysis <- file.path(st$genpgm, "analysis_data/")
+if (is.null(st$derived)  || !nzchar(st$derived))  st$derived  <- file.path(st$genpgm, "derived_data/")
 
 # Optional helpers: provide read_sas2(x) for objects like analysis.adsl / derived.adae
 read_sas2 <- function(lib_data_symbol) {
