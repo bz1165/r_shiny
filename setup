@@ -79,3 +79,71 @@ read_sas2 <- function(lib_data_symbol) {
 }
 
 cat("_setup.R executing done -------------------------------------------------\n")
+
+
+
+
+# Information Head -------------------------------------------------------------
+#            FILENAME : _setup.R
+#         DESCRIPTION : setup for R programming
+#               NOTES : copy to your RA folder, and use code below in the individual program to execute it.
+#  wd <- ifelse(interactive(),rstudioapi::getSourceEditorContext()$path,system("echo $PWD",intern=TRUE))
+#  source(paste0(gsub(r"((^.*/vob(/\w+){3}).*$)",r"(\1)",wd), "/util/_setup.R"))
+#
+#  See detailed instruction in https://rsconnect-prod.dit.eu.novartis.net/content/3484/setup-and-execution.html#setup.r
+#
+#  PROGRAMMING MODIFICATIONS HISTORY
+#  DATE        PROGRAMMER           DESCRIPTION
+#  __________  ___________________  _________________________________
+#
+#_______________________________________________________________________________
+
+
+# Load R packages --------------------------------------------
+cat(paste(c("The library dictionaries within which packages are looked for:",.libPaths(),"\n"), collapse='\n'))
+
+conflicted::conflicts_prefer(dplyr::between)
+conflicted::conflicts_prefer(dplyr::filter)
+conflicted::conflicts_prefer(dplyr::first)
+conflicted::conflicts_prefer(dplyr::lag)
+conflicted::conflicts_prefer(dplyr::last)
+conflicted::conflicts_prefer(lubridate::hour)
+conflicted::conflicts_prefer(lubridate::is.Date)
+conflicted::conflicts_prefer(lubridate::isoweek)
+conflicted::conflicts_prefer(lubridate::mday)
+conflicted::conflicts_prefer(lubridate::minute)
+conflicted::conflicts_prefer(lubridate::month)
+conflicted::conflicts_prefer(lubridate::quarter)
+conflicted::conflicts_prefer(lubridate::second)
+conflicted::conflicts_prefer(lubridate::wday)
+conflicted::conflicts_prefer(lubridate::week)
+conflicted::conflicts_prefer(lubridate::yday)
+conflicted::conflicts_prefer(lubridate::year)
+conflicted::conflicts_prefer(purrr::transpose)
+conflicted::conflicts_prefer(arsenal::`labels<-`)
+library(data.table)
+library(arsenal)
+library(tidyverse)
+library(haven)
+library(reporter)
+
+cat(paste0("Executing at ", date(),"\n"))
+print(sessionInfo())
+
+# Load general functions -------------------------------------------------------
+source(paste0(gsub(r"((^.*/vob(/\w+){3}).*$)",r"(\1)",wd), "/util/funcs_general.R"))
+
+# Set absolute paths to RA and other locations
+st <- set_paths(wd)
+
+# Load other functions and define objects as study needs  ----------------------
+#source(paste0(st$rautil, "funcs_ars.R"))
+#st$cutoffdt <- as_date("2025-11-12", tz='UTC')
+
+
+
+
+
+
+
+cat("_setup.R executing done -------------------------------------------------\n")
