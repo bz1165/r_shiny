@@ -6,6 +6,27 @@ source("util/config.R")
 
 .RUNNER_SETUP_CACHE <- new.env(parent = emptyenv())
 
+inject_compat_shims <- function(target_env) {
+  # Provide commonly used stringr helpers for company setup/utils that may run
+  # before tidyverse attaches. Includes typo-compatible alias str_dect.
+  if (requireNamespace("stringr", quietly = TRUE)) {
+    stringr_fns <- c(
+      "regex", "str_detect", "str_match", "str_extract", "str_replace",
+      "str_replace_all", "str_split_fixed", "str_subset", "str_to_lower",
+      "str_to_upper", "str_trim", "str_count"
+    )
+    for (fn in stringr_fns) {
+      assign(fn, getExportedValue("stringr", fn), envir = target_env)
+    }
+    # Compatibility alias for typo sometimes present in legacy scripts.
+    assign("str_dect", getExportedValue("stringr", "str_detect"), envir = target_env)
+  }
+
+  if (requireNamespace("magrittr", quietly = TRUE)) {
+    assign("%>%", getExportedValue("magrittr", "%>%"), envir = target_env)
+  }
+}
+
 make_training_wd <- function() {
   file.path(CONFIG$TRAINING_RA_ROOT, "pgm", "shiny_runner.R")
 }
@@ -24,10 +45,7 @@ load_setup_env <- function(setup_timeout_sec = 30, force_reload = FALSE) {
 
   compat_env <- new.env(parent = baseenv())
   compat_env$conflict_prefer <- function(...) invisible(NULL)
-  # stringr helpers used by some company utils before tidyverse attaches
-  if (requireNamespace("stringr", quietly = TRUE)) {
-    compat_env$regex <- stringr::regex
-  }
+  inject_compat_shims(compat_env)
 
   setup_env <- new.env(parent = compat_env)
   setup_env$wd <- make_training_wd()
@@ -59,27 +77,17 @@ load_setup_env <- function(setup_timeout_sec = 30, force_reload = FALSE) {
     setTimeLimit(elapsed = setup_timeout_sec, transient = TRUE)
     on.exit(setTimeLimit(elapsed = Inf, transient = FALSE), add = TRUE)
 
-    # First try setup as-is.
+    # Preload general funcs once (if present) so set_paths/read_df helpers exist.
+    if (!is.null(funcs_general_path)) {
+      sys.source(funcs_general_path, envir = setup_env)
+    }
+
+    # Then load project setup.
     sys.source(setup_path, envir = setup_env)
     NULL
   }, error = function(e) {
     conditionMessage(e)
   })
-
-  # Fallback: if setup failed due to missing set_paths, preload company general
-  # funcs and retry setup one time.
-  if (!is.null(setup_res) && grepl('could not find function "set_paths"', setup_res, fixed = TRUE) && !is.null(funcs_general_path)) {
-    setup_res <- tryCatch({
-      setTimeLimit(elapsed = setup_timeout_sec, transient = TRUE)
-      on.exit(setTimeLimit(elapsed = Inf, transient = FALSE), add = TRUE)
-
-      sys.source(funcs_general_path, envir = setup_env)
-      sys.source(setup_path, envir = setup_env)
-      NULL
-    }, error = function(e) {
-      conditionMessage(e)
-    })
-  }
 
   if (!is.null(setup_res)) {
     stop(paste0("Setup failed: ", setup_res))
