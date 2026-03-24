@@ -1,46 +1,54 @@
-suppressPackageStartupMessages({
-  library(rtables)
-})
+normalize_tbl_lines <- function(tbl) {
+  lines <- capture.output(print(tbl))
 
-tbl_to_matrix <- function(tbl) {
-  m <- as.matrix(tbl)
-  apply(m, c(1, 2), function(x) {
-    x <- as.character(x)
-    x <- gsub("[ \t]+", " ", x)
-    trimws(x)
-  })
+  # normalize whitespace
+  lines <- gsub("[ \t]+", " ", lines)
+  lines <- gsub("\\s+$", "", lines)
+
+  # remove leading/trailing blank lines
+  while (length(lines) > 0 && trimws(lines[1]) == "") {
+    lines <- lines[-1]
+  }
+  while (length(lines) > 0 && trimws(lines[length(lines)]) == "") {
+    lines <- lines[-length(lines)]
+  }
+
+  lines
 }
 
 grade_rtables_matrix <- function(user_tbl, ref_tbl, max_diffs = 15) {
-  if (!inherits(user_tbl, "TableTree")) {
-    return(list(pass = FALSE, msg = "Your code must return an rtables TableTree object (build_table output)."))
-  }
+  user_lines <- normalize_tbl_lines(user_tbl)
+  ref_lines  <- normalize_tbl_lines(ref_tbl)
 
-  mu <- tbl_to_matrix(user_tbl)
-  mr <- tbl_to_matrix(ref_tbl)
+  max_len <- max(length(user_lines), length(ref_lines))
+  length(user_lines) <- max_len
+  length(ref_lines)  <- max_len
 
-  if (!identical(dim(mu), dim(mr))) {
-    return(list(
-      pass = FALSE,
-      msg = sprintf(
-        "Table dimension mismatch: yours %s vs reference %s.",
-        paste(dim(mu), collapse = "x"),
-        paste(dim(mr), collapse = "x")
-      )
-    ))
-  }
+  user_lines[is.na(user_lines)] <- "<missing line>"
+  ref_lines[is.na(ref_lines)]   <- "<missing line>"
 
-  diffs <- which(mu != mr, arr.ind = TRUE)
-  if (nrow(diffs) == 0) {
+  diffs <- which(user_lines != ref_lines)
+
+  if (length(diffs) == 0) {
     return(list(pass = TRUE, msg = "✅ Correct! Output matches reference."))
   }
 
-  diffs <- diffs[seq_len(min(nrow(diffs), max_diffs)), , drop = FALSE]
-  lines <- apply(diffs, 1, function(rc) {
-    r <- rc[[1]]
-    c <- rc[[2]]
-    sprintf("Row %d, Col %d: expected [%s] but got [%s]", r, c, mr[r, c], mu[r, c])
-  })
+  diffs <- head(diffs, max_diffs)
 
-  list(pass = FALSE, msg = paste0("❌ Not yet. First differences:\n", paste(lines, collapse = "\n")))
+  msg_lines <- vapply(
+    diffs,
+    function(i) {
+      paste0(
+        "Line ", i, ":\n",
+        "  expected: ", ref_lines[i], "\n",
+        "  got     : ", user_lines[i]
+      )
+    },
+    character(1)
+  )
+
+  list(
+    pass = FALSE,
+    msg = paste0("❌ Not yet. First differences:\n\n", paste(msg_lines, collapse = "\n\n"))
+  )
 }
