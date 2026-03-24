@@ -1,0 +1,36 @@
+a_set_row_cell() — mixed count / n(%) row helper
+
+Purpose
+-------
+This helper is useful for analysis set tables where one row needs pure counts
+(e.g. Screened set) and the other rows need n (%).
+
+Why not reuse a_npct_subj directly?
+-----------------------------------
+Because a_npct_subj always formats nonzero rows as:
+  xx (xx.x)
+
+In the 14.1-2.1.f analysis sets shell:
+- Screened set should display counts only
+- Randomized / FAS / SAF / Open-label rows should display n (%)
+- Empty slices should display blank instead of 0
+
+Code
+----
+a_set_row_cell <- function(x, labelstr, .N_col) {
+  n <- length(unique(x[!is.na(x)]))
+
+  cell <- if (identical(labelstr, "Screened set")) {
+    if (n == 0L) rcell("") else rcell(n, format = "xx")
+  } else {
+    if (n == 0L) {
+      rcell("")
+    } else {
+      rcell(c(n, n / .N_col * 100), format = "xx (xx.x)")
+    }
+  }
+
+  in_rows(" " = cell, .labels = labelstr)
+}
+
+Typical use
