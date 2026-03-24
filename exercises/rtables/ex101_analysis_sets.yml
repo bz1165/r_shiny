@@ -1,16 +1,34 @@
 id: ex101_analysis_sets
-title: "Analysis sets (RAS / FAS / SAF / OLS)"
+title: "Analysis sets — Table 14.1-2.1.f"
 description: |
-  Build an analysis sets table using analysis.adsl.
+  Build the analysis sets table corresponding to 14.1-2.1.f.
 
   Goal:
-  - treatment columns by ARM + Total
-  - rows: Randomized set, Full analysis set, Safety set, Open-label set
-  - values shown as n (%)
-  - reuse the percentage helper from training
+  - columns:
+      Screen Failures/Not Assigned
+      Inclisiran-Inclisiran
+      Placebo-Inclisiran
+      Total
+  - rows:
+      Screened set
+      Randomized set
+      Full analysis set
+      Safety set
+      Open-label set
+  - use the mixed helper so that:
+      Screened set shows counts only
+      the other rows show n (%)
+  - focus on rtables layout only
 
-  In this exercise, data preparation is already done for you.
-  Focus only on the rtables layout.
 starter_file: "ex101_analysis_sets_starter.R"
 reference_file: "ex101_analysis_sets_reference.R"
 timeout_sec: 20
+
+shell_table: "Table 14.1-2.1.f"
+shell_file: ""
+grading_mode: "table_text"
+helper_keys:
+  - a_set_row_cell
+  - a_npct_subj
+  - split_vs_summarize
+  - alt_counts_df
