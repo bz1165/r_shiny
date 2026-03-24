@@ -11,6 +11,7 @@ if (HAS_SHINYACE) {
 
 source("util/config.R")
 source("util/exercise_io.R")
+source("util/helper_io.R")
 source("util/runner.R")
 source("util/grading_rtables.R")
 source("util/render_rtables.R")
@@ -20,10 +21,11 @@ source("util/save_submission.R")
 
 ex_index <- load_ex_index(CONFIG$APP_ROOT)
 choices <- make_exercise_choices(ex_index)
+helper_catalog <- load_helper_catalog(CONFIG$APP_ROOT)
 
 code_input_ui <- function(id, value = "") {
   if (HAS_SHINYACE) {
-    return(aceEditor(
+    return(shinyAce::aceEditor(
       id,
       mode = "r",
       theme = "chrome",
@@ -45,7 +47,7 @@ code_input_ui <- function(id, value = "") {
 
 update_code_input <- function(session, id, value) {
   if (HAS_SHINYACE) {
-    updateAceEditor(session, id, value = value)
+    shinyAce::updateAceEditor(session, id, value = value)
   } else {
     updateTextAreaInput(session, id, value = value)
   }
@@ -55,9 +57,31 @@ get_code_input <- function(input, id) {
   input[[id]] %||% ""
 }
 
-read_optional_text_file <- function(path) {
-  if (is.null(path) || !nzchar(path) || !file.exists(path)) return(NULL)
-  paste(readLines(path, warn = FALSE), collapse = "\n")
+normalize_key <- function(x) {
+  tolower(gsub("[^0-9a-z]+", "", x %||% ""))
+}
+
+resolve_shell_file <- function(ex, docs_dir) {
+  if (!dir.exists(docs_dir)) return(NULL)
+
+  files <- list.files(docs_dir, full.names = FALSE)
+  if (length(files) == 0) return(NULL)
+
+  shell_file <- ex$shell_file %||% ""
+  if (nzchar(shell_file) && shell_file %in% files) {
+    return(shell_file)
+  }
+
+  shell_table <- ex$shell_table %||% ""
+  if (!nzchar(shell_table)) return(NULL)
+
+  key <- normalize_key(shell_table)
+  key <- sub("^table", "", key)
+
+  norm_files <- vapply(files, normalize_key, character(1))
+  idx <- which(grepl(key, norm_files, fixed = TRUE))
+
+  if (length(idx) > 0) files[idx[1]] else NULL
 }
 
 ui <- fluidPage(
@@ -152,8 +176,14 @@ ui <- fluidPage(
           div(class = "box", verbatimTextOutput("result"))
         ),
         tabPanel(
-          "Helper",
-          div(class = "box", uiOutput("helper_preview"))
+          "Helpers",
+          div(
+            class = "box",
+            textInput("helper_search", "Search helpers", value = ""),
+            uiOutput("helper_select_ui"),
+            tags$hr(),
+            uiOutput("helper_preview")
+          )
         )
       )
     )
@@ -175,7 +205,10 @@ server <- function(input, output, session) {
   })
 
   docs_prefix <- reactiveVal(NULL)
-  helper_text <- reactiveVal("No helper documentation configured for this exercise.")
+
+  helper_filtered <- reactive({
+    filter_helper_catalog(helper_catalog, input$helper_search %||% "")
+  })
 
   observeEvent(user_paths(), {
     up <- user_paths()
@@ -196,15 +229,24 @@ server <- function(input, output, session) {
     starter_code <- paste(starter_txt, collapse = "\n")
     update_code_input(session, "editor", starter_code)
 
-    helper_file <- ex$helper_file %||% ""
-    helper_path <- if (nzchar(helper_file)) file.path(CONFIG$APP_ROOT, helper_file) else ""
-    helper_content <- read_optional_text_file(helper_path)
+    recommended <- ex$helper_keys %||% character()
+    filtered <- helper_filtered()
 
-    if (is.null(helper_content)) {
-      helper_text("No helper documentation configured for this exercise.")
-    } else {
-      helper_text(helper_content)
+    selected <- NULL
+    if (length(recommended) > 0 && nrow(filtered) > 0) {
+      hit <- recommended[recommended %in% filtered$key]
+      if (length(hit) > 0) selected <- hit[1]
     }
+    if (is.null(selected) && nrow(filtered) > 0) {
+      selected <- filtered$key[1]
+    }
+
+    updateSelectInput(
+      session,
+      "helper_key",
+      choices = helper_choices(filtered),
+      selected = selected
+    )
 
     output$ex_desc <- renderUI({
       div(
@@ -217,17 +259,62 @@ server <- function(input, output, session) {
     output$tbl_preview <- renderUI(tags$em("Run to preview output."))
   }, ignoreInit = FALSE)
 
+  observeEvent(helper_filtered(), {
+    filtered <- helper_filtered()
+
+    selected <- isolate(input$helper_key)
+    if (nrow(filtered) == 0) {
+      updateSelectInput(session, "helper_key", choices = character(), selected = character())
+    } else {
+      if (is.null(selected) || !selected %in% filtered$key) {
+        selected <- filtered$key[1]
+      }
+      updateSelectInput(
+        session,
+        "helper_key",
+        choices = helper_choices(filtered),
+        selected = selected
+      )
+    }
+  }, ignoreInit = TRUE)
+
+  output$helper_select_ui <- renderUI({
+    filtered <- helper_filtered()
+
+    selectInput(
+      "helper_key",
+      "Helper",
+      choices = helper_choices(filtered),
+      selected = isolate(input$helper_key)
+    )
+  })
+
+  output$helper_preview <- renderUI({
+    txt <- read_helper_doc(CONFIG$APP_ROOT, helper_catalog, input$helper_key %||% "")
+    tags$pre(
+      style = paste(
+        "white-space: pre-wrap;",
+        "font-family: Menlo, Monaco, Consolas, monospace;",
+        "font-size: 12px;",
+        "line-height: 1.35;"
+      ),
+      txt
+    )
+  })
+
   output$exercise_meta <- renderUI({
     ex <- current_ex()
     up <- user_paths()
     pfx <- docs_prefix()
 
     shell_table <- ex$shell_table %||% "Not specified"
-    shell_file  <- ex$shell_file %||% ""
+    grading_mode <- ex$grading_mode %||% "table_text"
+    helper_keys <- ex$helper_keys %||% character()
 
+    shell_doc <- resolve_shell_file(ex, up$docs_dir)
     shell_link <- NULL
-    if (!is.null(pfx) && nzchar(shell_file)) {
-      shell_href <- paste0("/", pfx, "/", utils::URLencode(shell_file))
+    if (!is.null(pfx) && !is.null(shell_doc)) {
+      shell_href <- paste0("/", pfx, "/", utils::URLencode(shell_doc))
       shell_link <- tags$a(href = shell_href, target = "_blank", "Open shell / documentation")
     }
 
@@ -244,22 +331,18 @@ server <- function(input, output, session) {
       div(class = "meta-label", "Shell table"),
       div(class = "meta-value", shell_table),
 
+      div(class = "meta-label", "Grading mode"),
+      div(class = "meta-value", grading_mode),
+
+      if (length(helper_keys) > 0) tagList(
+        div(class = "meta-label", "Recommended helpers"),
+        div(class = "meta-value", paste(helper_keys, collapse = ", "))
+      ),
+
       if (!is.null(shell_link)) tagList(
         div(class = "meta-label", "Documentation"),
         div(class = "meta-value", shell_link)
       )
-    )
-  })
-
-  output$helper_preview <- renderUI({
-    tags$pre(
-      style = paste(
-        "white-space: pre-wrap;",
-        "font-family: Menlo, Monaco, Consolas, monospace;",
-        "font-size: 12px;",
-        "line-height: 1.35;"
-      ),
-      helper_text()
     )
   })
 
@@ -300,6 +383,7 @@ server <- function(input, output, session) {
     ex <- current_ex()
     up <- user_paths()
     code <- get_code_input(input, "editor")
+    grading_mode <- ex$grading_mode %||% "table_text"
 
     out <- tryCatch(
       run_user_code(
@@ -336,7 +420,13 @@ server <- function(input, output, session) {
     }
 
     g <- tryCatch(
-      grade_rtables_matrix(out$tbl, ref_out$tbl),
+      {
+        if (identical(grading_mode, "table_text")) {
+          grade_rtables_matrix(out$tbl, ref_out$tbl)
+        } else {
+          list(pass = FALSE, msg = paste0("Unsupported grading mode: ", grading_mode))
+        }
+      },
       error = function(e) {
         list(pass = FALSE, msg = paste0("Grading failed:\n", conditionMessage(e)))
       }
