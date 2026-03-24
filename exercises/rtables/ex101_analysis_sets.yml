@@ -1,0 +1,16 @@
+id: ex101_analysis_sets
+title: "Analysis sets (RAS / FAS / SAF / OLS)"
+description: |
+  Build an analysis sets table using analysis.adsl.
+
+  Goal:
+  - treatment columns by ARM + Total
+  - rows: Randomized set, Full analysis set, Safety set, Open-label set
+  - values shown as n (%)
+  - reuse the percentage helper from training
+
+  In this exercise, data preparation is already done for you.
+  Focus only on the rtables layout.
+starter_file: "ex101_analysis_sets_starter.R"
+reference_file: "ex101_analysis_sets_reference.R"
+timeout_sec: 20
