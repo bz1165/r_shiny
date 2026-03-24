@@ -20,10 +20,16 @@ Code
 a_set_row_cell <- function(x, labelstr, .N_col) {
   n <- length(unique(x[!is.na(x)]))
 
-  cell <- if (identical(labelstr, "Screened set")) {
-    if (n == 0L) rcell("") else rcell(n, format = "xx")
+  # Screened set row: count only
+  if (identical(labelstr, "Screened set")) {
+    cell <- if (n == 0L) {
+      rcell("")
+    } else {
+      rcell(n, format = "xx")
+    }
   } else {
-    if (n == 0L) {
+    # Other rows: n (%), but blank if no data in that slice
+    cell <- if (n == 0L) {
       rcell("")
     } else {
       rcell(c(n, n / .N_col * 100), format = "xx (xx.x)")
@@ -33,4 +39,8 @@ a_set_row_cell <- function(x, labelstr, .N_col) {
   in_rows(" " = cell, .labels = labelstr)
 }
 
+
 Typical use
+-----------
+split_rows_by("SET", ...) %>%
+summarize_row_groups("USUBJID", cfun = a_set_row_cell)
