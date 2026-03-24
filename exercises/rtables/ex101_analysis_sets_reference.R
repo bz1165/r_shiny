@@ -132,10 +132,14 @@ tbl
 a_set_row_cell <- function(x, labelstr, .N_col) {
   n <- length(unique(x[!is.na(x)]))
 
-  cell <- if (identical(labelstr, "Screened set")) {
-    if (n == 0L) rcell("") else rcell(n, format = "xx")
+  if (identical(labelstr, "Screened set")) {
+    cell <- if (n == 0L) {
+      rcell("")
+    } else {
+      rcell(n, format = "xx")
+    }
   } else {
-    if (n == 0L) {
+    cell <- if (n == 0L) {
       rcell("")
     } else {
       rcell(c(n, n / .N_col * 100), format = "xx (xx.x)")
