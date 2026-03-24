@@ -16,10 +16,10 @@ source("util/grading_rtables.R")
 source("util/render_rtables.R")
 source("util/save_submission.R")
 
+`%||%` <- function(x, y) if (!is.null(x)) x else y
+
 ex_index <- load_ex_index(CONFIG$APP_ROOT)
 choices <- make_exercise_choices(ex_index)
-
-`%||%` <- function(x, y) if (!is.null(x)) x else y
 
 code_input_ui <- function(id, value = "") {
   if (HAS_SHINYACE) {
@@ -27,7 +27,7 @@ code_input_ui <- function(id, value = "") {
       id,
       mode = "r",
       theme = "chrome",
-      height = "520px",
+      height = "560px",
       fontSize = 14,
       value = value
     ))
@@ -38,7 +38,7 @@ code_input_ui <- function(id, value = "") {
     label = NULL,
     value = value,
     width = "100%",
-    height = "520px",
+    height = "560px",
     resize = "vertical"
   )
 }
@@ -55,16 +55,46 @@ get_code_input <- function(input, id) {
   input[[id]] %||% ""
 }
 
+read_optional_text_file <- function(path) {
+  if (is.null(path) || !nzchar(path) || !file.exists(path)) return(NULL)
+  paste(readLines(path, warn = FALSE), collapse = "\n")
+}
+
 ui <- fluidPage(
   tags$head(
     tags$style(HTML("
+      body { background:#f8fafc; }
       .muted { color:#6b7280; }
-      .box { border:1px solid #e5e7eb; border-radius:10px; padding:12px; margin-bottom:12px; }
-      .btnrow { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+      .box {
+        border:1px solid #e5e7eb;
+        border-radius:12px;
+        padding:14px;
+        margin-bottom:14px;
+        background:white;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+      }
+      .btnrow {
+        display:flex;
+        gap:8px;
+        flex-wrap:wrap;
+        align-items:center;
+      }
       .small { font-size:12px; color:#6b7280; }
+      .meta-label {
+        font-size: 12px;
+        color: #6b7280;
+        margin-top: 8px;
+        margin-bottom: 2px;
+      }
+      .meta-value {
+        font-size: 13px;
+        color: #111827;
+        word-break: break-word;
+      }
       pre {
         white-space: pre-wrap;
         word-break: break-word;
+        margin: 0;
       }
     "))
   ),
@@ -80,6 +110,8 @@ ui <- fluidPage(
         selectInput("ex_id", NULL, choices = choices),
         uiOutput("ex_desc"),
         tags$hr(),
+        uiOutput("exercise_meta"),
+        tags$hr(),
         div(
           class = "btnrow",
           actionButton("run", "Run (Preview)"),
@@ -93,9 +125,7 @@ ui <- fluidPage(
           tags$br(),
           "Starter code includes setup header for copy-paste run.",
           tags$br(),
-          "Reference code is used only for grading.",
-          tags$br(),
-          "Saved to: ", tags$code(CONFIG$SAVE_ROOT)
+          "Reference code is hidden and used only for grading."
         )
       )
     ),
@@ -111,15 +141,20 @@ ui <- fluidPage(
 
     column(
       4,
-      div(
-        class = "box",
-        h4("Table preview"),
-        uiOutput("tbl_preview")
-      ),
-      div(
-        class = "box",
-        h4("Result"),
-        verbatimTextOutput("result")
+      tabsetPanel(
+        type = "tabs",
+        tabPanel(
+          "Preview",
+          div(class = "box", uiOutput("tbl_preview"))
+        ),
+        tabPanel(
+          "Grade",
+          div(class = "box", verbatimTextOutput("result"))
+        ),
+        tabPanel(
+          "Helper",
+          div(class = "box", uiOutput("helper_preview"))
+        )
       )
     )
   )
@@ -127,11 +162,11 @@ ui <- fluidPage(
 
 server <- function(input, output, session) {
   user_id <- reactive({
-    u <- session$user
-    if (is.null(u) || !nzchar(u)) u <- Sys.getenv("USER")
-    if (is.null(u) || !nzchar(u)) u <- Sys.info()[["user"]]
-    if (is.null(u) || !nzchar(u)) u <- "unknown_user"
-    u
+    resolve_user_id(session$user)
+  })
+
+  user_paths <- reactive({
+    build_user_paths(user_id())
   })
 
   current_ex <- reactive({
@@ -139,13 +174,37 @@ server <- function(input, output, session) {
     load_exercise(CONFIG$APP_ROOT, ex_index, input$ex_id)
   })
 
+  docs_prefix <- reactiveVal(NULL)
+  helper_text <- reactiveVal("No helper documentation configured for this exercise.")
+
+  observeEvent(user_paths(), {
+    up <- user_paths()
+
+    if (dir.exists(up$docs_dir)) {
+      prefix <- paste0("docs_", gsub("[^A-Za-z0-9_]", "_", up$user_id))
+      addResourcePath(prefix, up$docs_dir)
+      docs_prefix(prefix)
+    } else {
+      docs_prefix(NULL)
+    }
+  }, ignoreInit = FALSE)
+
   observeEvent(current_ex(), {
     ex <- current_ex()
 
     starter_txt <- readLines(ex$starter_file, warn = FALSE)
     starter_code <- paste(starter_txt, collapse = "\n")
-
     update_code_input(session, "editor", starter_code)
+
+    helper_file <- ex$helper_file %||% ""
+    helper_path <- if (nzchar(helper_file)) file.path(CONFIG$APP_ROOT, helper_file) else ""
+    helper_content <- read_optional_text_file(helper_path)
+
+    if (is.null(helper_content)) {
+      helper_text("No helper documentation configured for this exercise.")
+    } else {
+      helper_text(helper_content)
+    }
 
     output$ex_desc <- renderUI({
       div(
@@ -158,12 +217,63 @@ server <- function(input, output, session) {
     output$tbl_preview <- renderUI(tags$em("Run to preview output."))
   }, ignoreInit = FALSE)
 
+  output$exercise_meta <- renderUI({
+    ex <- current_ex()
+    up <- user_paths()
+    pfx <- docs_prefix()
+
+    shell_table <- ex$shell_table %||% "Not specified"
+    shell_file  <- ex$shell_file %||% ""
+
+    shell_link <- NULL
+    if (!is.null(pfx) && nzchar(shell_file)) {
+      shell_href <- paste0("/", pfx, "/", utils::URLencode(shell_file))
+      shell_link <- tags$a(href = shell_href, target = "_blank", "Open shell / documentation")
+    }
+
+    tagList(
+      div(class = "meta-label", "Current user"),
+      div(class = "meta-value", up$user_id),
+
+      div(class = "meta-label", "Training RA root"),
+      div(class = "meta-value", up$ra_root),
+
+      div(class = "meta-label", "Save location"),
+      div(class = "meta-value", up$save_dir),
+
+      div(class = "meta-label", "Shell table"),
+      div(class = "meta-value", shell_table),
+
+      if (!is.null(shell_link)) tagList(
+        div(class = "meta-label", "Documentation"),
+        div(class = "meta-value", shell_link)
+      )
+    )
+  })
+
+  output$helper_preview <- renderUI({
+    tags$pre(
+      style = paste(
+        "white-space: pre-wrap;",
+        "font-family: Menlo, Monaco, Consolas, monospace;",
+        "font-size: 12px;",
+        "line-height: 1.35;"
+      ),
+      helper_text()
+    )
+  })
+
   observeEvent(input$run, {
     ex <- current_ex()
+    up <- user_paths()
     code <- get_code_input(input, "editor")
 
     out <- tryCatch(
-      run_user_code(code, timeout_sec = ex$timeout_sec),
+      run_user_code(
+        code = code,
+        training_ra_root = up$ra_root,
+        timeout_sec = ex$timeout_sec
+      ),
       error = function(e) {
         list(ok = FALSE, tbl = NULL, msg = paste0("Run failed:\n", conditionMessage(e)))
       }
@@ -188,10 +298,15 @@ server <- function(input, output, session) {
 
   observeEvent(input$submit, {
     ex <- current_ex()
+    up <- user_paths()
     code <- get_code_input(input, "editor")
 
     out <- tryCatch(
-      run_user_code(code, timeout_sec = ex$timeout_sec),
+      run_user_code(
+        code = code,
+        training_ra_root = up$ra_root,
+        timeout_sec = ex$timeout_sec
+      ),
       error = function(e) {
         list(ok = FALSE, tbl = NULL, msg = paste0("Run failed:\n", conditionMessage(e)))
       }
@@ -204,7 +319,11 @@ server <- function(input, output, session) {
     }
 
     ref_out <- tryCatch(
-      run_reference_code(ex$reference_file, timeout_sec = ex$timeout_sec),
+      run_reference_code(
+        reference_file = ex$reference_file,
+        training_ra_root = up$ra_root,
+        timeout_sec = ex$timeout_sec
+      ),
       error = function(e) {
         list(ok = FALSE, tbl = NULL, msg = paste0("Reference failed:\n", conditionMessage(e)))
       }
@@ -236,10 +355,15 @@ server <- function(input, output, session) {
 
   observeEvent(input$save, {
     ex <- current_ex()
+    up <- user_paths()
     code <- get_code_input(input, "editor")
 
     saved <- tryCatch(
-      save_submission(CONFIG$SAVE_ROOT, user_id(), ex$id, code),
+      save_submission(
+        save_dir = up$save_dir,
+        exercise_id = ex$id,
+        code = code
+      ),
       error = function(e) paste0("Save failed:\n", conditionMessage(e))
     )
 
