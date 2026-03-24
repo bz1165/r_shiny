@@ -1,0 +1,26 @@
+s_patients_1line() — top line for AE tables
+
+Purpose
+-------
+This helper is for the top line of an AE table:
+
+  Number of subjects with at least one event
+
+It is typically used inside analyze(), not summarize_row_groups().
+
+Code
+----
+s_patients_1line <- function(x, labelstr, .N_col) {
+  n_pat <- length(unique(x[!is.na(x)]))
+
+  in_rows(
+    "Number of subjects with at least one event" =
+      rcell(c(n_pat, n_pat / .N_col * 100), format = "xx (xx.x)")
+  )
+}
+
+Typical use
+-----------
+basic_table(show_colcounts = TRUE) %>%
+split_cols_by("ARM") %>%
+analyze("USUBJID", afun = s_patients_1line, show_labels = "hidden")
