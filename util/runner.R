@@ -24,6 +24,10 @@ load_setup_env <- function(setup_timeout_sec = 30, force_reload = FALSE) {
 
   compat_env <- new.env(parent = baseenv())
   compat_env$conflict_prefer <- function(...) invisible(NULL)
+  # stringr helpers used by some company utils before tidyverse attaches
+  if (requireNamespace("stringr", quietly = TRUE)) {
+    compat_env$regex <- stringr::regex
+  }
 
   setup_env <- new.env(parent = compat_env)
   setup_env$wd <- make_training_wd()
@@ -55,17 +59,27 @@ load_setup_env <- function(setup_timeout_sec = 30, force_reload = FALSE) {
     setTimeLimit(elapsed = setup_timeout_sec, transient = TRUE)
     on.exit(setTimeLimit(elapsed = Inf, transient = FALSE), add = TRUE)
 
-    # Preload general function file if found. This prevents set_paths() missing
-    # when setup scripts expect a different util/utils folder layout.
-    if (!is.null(funcs_general_path)) {
-      sys.source(funcs_general_path, envir = setup_env)
-    }
-
+    # First try setup as-is.
     sys.source(setup_path, envir = setup_env)
     NULL
   }, error = function(e) {
     conditionMessage(e)
   })
+
+  # Fallback: if setup failed due to missing set_paths, preload company general
+  # funcs and retry setup one time.
+  if (!is.null(setup_res) && grepl('could not find function "set_paths"', setup_res, fixed = TRUE) && !is.null(funcs_general_path)) {
+    setup_res <- tryCatch({
+      setTimeLimit(elapsed = setup_timeout_sec, transient = TRUE)
+      on.exit(setTimeLimit(elapsed = Inf, transient = FALSE), add = TRUE)
+
+      sys.source(funcs_general_path, envir = setup_env)
+      sys.source(setup_path, envir = setup_env)
+      NULL
+    }, error = function(e) {
+      conditionMessage(e)
+    })
+  }
 
   if (!is.null(setup_res)) {
     stop(paste0("Setup failed: ", setup_res))
