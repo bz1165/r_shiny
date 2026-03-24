@@ -1,0 +1,35 @@
+split_rows_by() vs summarize_row_groups()
+
+split_rows_by()
+---------------
+Purpose:
+  Creates structure only.
+It defines where row groups exist.
+
+Example:
+  split_rows_by("SEX")
+
+This creates row groups:
+  Male
+  Female
+  Unknown
+
+But it does NOT fill values.
+
+summarize_row_groups()
+----------------------
+Purpose:
+  Fills one summary row per row-group node.
+
+Example:
+  split_rows_by("SEX") %>%
+  summarize_row_groups("USUBJID", cfun = a_npct_subj)
+
+This means:
+- first create SEX groups
+- then compute n (%) inside each SEX group
+
+Quick rule
+----------
+- split_* functions create the skeleton
+- summarize_* / analyze() fill values
