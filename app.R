@@ -206,6 +206,7 @@ server <- function(input, output, session) {
 
   docs_prefix <- reactiveVal(NULL)
 
+  # Filter helpers; empty search should show ALL helpers
   helper_filtered <- reactive({
     filter_helper_catalog(helper_catalog, input$helper_search %||% "")
   })
@@ -229,25 +230,6 @@ server <- function(input, output, session) {
     starter_code <- paste(starter_txt, collapse = "\n")
     update_code_input(session, "editor", starter_code)
 
-    recommended <- ex$helper_keys %||% character()
-    filtered <- helper_filtered()
-
-    selected <- NULL
-    if (length(recommended) > 0 && nrow(filtered) > 0) {
-      hit <- recommended[recommended %in% filtered$key]
-      if (length(hit) > 0) selected <- hit[1]
-    }
-    if (is.null(selected) && nrow(filtered) > 0) {
-      selected <- filtered$key[1]
-    }
-
-    updateSelectInput(
-      session,
-      "helper_key",
-      choices = helper_choices(filtered),
-      selected = selected
-    )
-
     output$ex_desc <- renderUI({
       div(
         tags$h5(ex$title),
@@ -259,38 +241,56 @@ server <- function(input, output, session) {
     output$tbl_preview <- renderUI(tags$em("Run to preview output."))
   }, ignoreInit = FALSE)
 
-  observeEvent(helper_filtered(), {
-    filtered <- helper_filtered()
-
-    selected <- isolate(input$helper_key)
-    if (nrow(filtered) == 0) {
-      updateSelectInput(session, "helper_key", choices = character(), selected = character())
-    } else {
-      if (is.null(selected) || !selected %in% filtered$key) {
-        selected <- filtered$key[1]
-      }
-      updateSelectInput(
-        session,
-        "helper_key",
-        choices = helper_choices(filtered),
-        selected = selected
-      )
-    }
-  }, ignoreInit = TRUE)
-
   output$helper_select_ui <- renderUI({
     filtered <- helper_filtered()
+
+    if (is.null(filtered) || nrow(filtered) == 0) {
+      return(tags$div(class = "muted", "No helpers found."))
+    }
+
+    selected <- input$helper_key
+    if (is.null(selected) || !selected %in% filtered$key) {
+      ex <- current_ex()
+      recommended <- ex$helper_keys %||% character()
+      hit <- recommended[recommended %in% filtered$key]
+
+      if (length(hit) > 0) {
+        selected <- hit[1]
+      } else {
+        selected <- filtered$key[1]
+      }
+    }
 
     selectInput(
       "helper_key",
       "Helper",
       choices = helper_choices(filtered),
-      selected = isolate(input$helper_key)
+      selected = selected
     )
   })
 
   output$helper_preview <- renderUI({
-    txt <- read_helper_doc(CONFIG$APP_ROOT, helper_catalog, input$helper_key %||% "")
+    filtered <- helper_filtered()
+
+    if (is.null(filtered) || nrow(filtered) == 0) {
+      return(tags$pre("No helper documentation available."))
+    }
+
+    selected_key <- input$helper_key
+    if (is.null(selected_key) || !selected_key %in% filtered$key) {
+      ex <- current_ex()
+      recommended <- ex$helper_keys %||% character()
+      hit <- recommended[recommended %in% filtered$key]
+
+      if (length(hit) > 0) {
+        selected_key <- hit[1]
+      } else {
+        selected_key <- filtered$key[1]
+      }
+    }
+
+    txt <- read_helper_doc(CONFIG$APP_ROOT, helper_catalog, selected_key)
+
     tags$pre(
       style = paste(
         "white-space: pre-wrap;",
