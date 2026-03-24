@@ -1,0 +1,44 @@
+a_npct_subj() — group-level n (%)
+
+Purpose
+-------
+Use this helper inside summarize_row_groups("USUBJID", cfun = ...).
+
+It is for categorical rows where each row-group level should display:
+  n (%)
+
+Typical use
+-----------
+split_rows_by("SEX") %>%
+summarize_row_groups("USUBJID", cfun = a_npct_subj)
+
+Meaning
+-------
+- x: usually subject IDs in the current row/column slice
+- .N_col: denominator of the current column
+- labelstr: label of the current row-group level
+
+Code
+----
+a_npct_subj <- function(x, labelstr, .N_col) {
+  n <- length(unique(x[!is.na(x)]))
+
+  cell <- if (n == 0L) {
+    rcell(0, format = "xx")
+  } else {
+    rcell(c(n, n / .N_col * 100), format = "xx (xx.x)")
+  }
+
+  in_rows(" " = cell, .labels = labelstr)
+}
+
+When to use
+-----------
+- SEX / GEOREG / ACEi-ARB category rows
+- SOC rows
+- PT rows
+
+When not to use
+---------------
+- continuous blocks such as Age (use analyze + in_rows)
+- rows where some levels should show pure counts and others should show n(%)
