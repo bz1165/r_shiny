@@ -59,27 +59,17 @@ load_setup_env <- function(setup_timeout_sec = 30, force_reload = FALSE) {
     setTimeLimit(elapsed = setup_timeout_sec, transient = TRUE)
     on.exit(setTimeLimit(elapsed = Inf, transient = FALSE), add = TRUE)
 
-    # First try setup as-is.
+    # Preload general funcs once (if present) so set_paths/read_df helpers exist.
+    if (!is.null(funcs_general_path)) {
+      sys.source(funcs_general_path, envir = setup_env)
+    }
+
+    # Then load project setup.
     sys.source(setup_path, envir = setup_env)
     NULL
   }, error = function(e) {
     conditionMessage(e)
   })
-
-  # Fallback: if setup failed due to missing set_paths, preload company general
-  # funcs and retry setup one time.
-  if (!is.null(setup_res) && grepl('could not find function "set_paths"', setup_res, fixed = TRUE) && !is.null(funcs_general_path)) {
-    setup_res <- tryCatch({
-      setTimeLimit(elapsed = setup_timeout_sec, transient = TRUE)
-      on.exit(setTimeLimit(elapsed = Inf, transient = FALSE), add = TRUE)
-
-      sys.source(funcs_general_path, envir = setup_env)
-      sys.source(setup_path, envir = setup_env)
-      NULL
-    }, error = function(e) {
-      conditionMessage(e)
-    })
-  }
 
   if (!is.null(setup_res)) {
     stop(paste0("Setup failed: ", setup_res))
