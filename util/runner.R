@@ -64,7 +64,7 @@ load_setup_env <- function(
     stop("Setup failed: cannot find _setup.R under util/ or utils/ in training RA root.")
   }
 
-  # Make package search path behave like normal interactive use
+  # Use globalenv() as parent so package search path behaves like normal interactive use
   setup_env <- new.env(parent = globalenv())
   setup_env$wd <- make_training_wd(training_ra_root)
 
@@ -98,7 +98,6 @@ load_setup_env <- function(
   setup_env
 }
 
-# Evaluate line-by-line so runtime errors can be annotated with source line number
 eval_code_with_lines <- function(code, env, timeout_sec = 10) {
   exprs <- parse(text = code, keep.source = TRUE)
   srcrefs <- attr(exprs, "srcref")
@@ -132,6 +131,7 @@ is_rtables_table <- function(x) {
 eval_in_training_env <- function(
   code,
   training_ra_root = default_training_ra_root(),
+  prep_code = NULL,
   timeout_sec = 10,
   setup_timeout_sec = 90
 ) {
@@ -160,6 +160,11 @@ eval_in_training_env <- function(
   env$file.remove <- block
 
   tryCatch({
+    # hidden prep first
+    if (!is.null(prep_code) && nzchar(prep_code)) {
+      eval(parse(text = prep_code), envir = env)
+    }
+
     # IMPORTANT: mask the file-level setup snippet before evaluation.
     # setup is already loaded from the GPS/VOB path by load_setup_env().
     code2 <- mask_setup_snippet(code)
@@ -188,11 +193,13 @@ extract_table <- function(res) {
 run_user_code <- function(
   code,
   training_ra_root = default_training_ra_root(),
+  prep_code = NULL,
   timeout_sec = 10
 ) {
   res <- eval_in_training_env(
     code = code,
     training_ra_root = training_ra_root,
+    prep_code = prep_code,
     timeout_sec = timeout_sec
   )
 
@@ -216,12 +223,14 @@ run_user_code <- function(
 run_reference_code <- function(
   reference_file,
   training_ra_root = default_training_ra_root(),
+  prep_code = NULL,
   timeout_sec = 10
 ) {
   code <- paste(readLines(reference_file, warn = FALSE), collapse = "\n")
   run_user_code(
     code = code,
     training_ra_root = training_ra_root,
+    prep_code = prep_code,
     timeout_sec = timeout_sec
   )
 }
