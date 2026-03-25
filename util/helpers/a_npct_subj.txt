@@ -1,25 +1,36 @@
-a_npct_subj() — group-level n (%)
+a_npct_subj()
 
 Purpose
 -------
-Use this helper inside summarize_row_groups("USUBJID", cfun = ...).
+Reusable helper for subject-level categorical summaries in rtables.
 
-It is for categorical rows where each row-group level should display:
-  n (%)
+What it returns
+---------------
+One row per current row-group level:
+- n (%)
 
-Typical use
------------
-split_rows_by("SEX") %>%
-summarize_row_groups("USUBJID", cfun = a_npct_subj)
+Input
+-----
+x        : usually USUBJID in the current row/column slice
+labelstr : row label provided by summarize_row_groups()
+.N_col   : column denominator supplied by rtables
 
-Meaning
--------
-- x: usually subject IDs in the current row/column slice
-- .N_col: denominator of the current column
-- labelstr: label of the current row-group level
+Key idea
+--------
+Count unique subjects in the current slice, then display:
+- xx           when n = 0
+- xx (xx.x)    when n > 0
 
-Code
-----
+Typical pattern
+---------------
+basic_table(...) %>%
+  split_cols_by("ARM") %>%
+  add_overall_col("Total") %>%
+  split_rows_by("CATEGORY") %>%
+  summarize_row_groups("USUBJID", cfun = a_npct_subj)
+
+Function
+--------
 a_npct_subj <- function(x, labelstr, .N_col) {
   n <- length(unique(x[!is.na(x)]))
 
@@ -32,13 +43,16 @@ a_npct_subj <- function(x, labelstr, .N_col) {
   in_rows(" " = cell, .labels = labelstr)
 }
 
-When to use
------------
-- SEX / GEOREG / ACEi-ARB category rows
-- SOC rows
-- PT rows
+When to reuse
+-------------
+- Protocol deviations
+- TEAE by SOC/PT
+- Medical history / concomitant medication count tables
+- Any hierarchical subject-count frequency table
 
-When not to use
----------------
-- continuous blocks such as Age (use analyze + in_rows)
-- rows where some levels should show pure counts and others should show n(%)
+Notes
+-----
+- This is intended for subject-level counting, not event-level occurrence counts.
+- If one subject can appear multiple times in the raw data, de-duplicate before tabulation
+  at the level you want to count.
+- .N_col is provided by rtables to afun/cfun; it represents the column-wise denominator.
