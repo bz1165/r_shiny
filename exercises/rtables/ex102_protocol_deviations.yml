@@ -1,0 +1,24 @@
+id: ex102_protocol_deviations
+title: "Protocol deviations — Final analysis: Extension part (Open-label set)"
+description: |
+  Build Table 14.1-3.1.f2 using prepared protocol deviation data.
+
+  Goal:
+  - columns = Inclisiran-Inclisiran / Placebo-Inclisiran / Total
+  - top row = Any protocol deviation
+  - row hierarchy = Category -> Protocol deviation criterion
+  - counts = subject-level n (%)
+
+  Focus:
+  - split_rows_by()
+  - summarize_row_groups()
+  - nested row structure
+  - alt_counts_df for subject-level header N
+
+shell_table: "Table 14.1-3.1.f2"
+grading_mode: "table_text"
+helper_keys:
+  - a_npct_subj
+timeout_sec: 20
+starter_file: "ex102_protocol_deviations_starter.R"
+reference_file: "ex102_protocol_deviations_reference.R"
