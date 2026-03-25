@@ -1,34 +1,24 @@
-id: ex101_analysis_sets
-title: "Analysis sets — Table 14.1-2.1.f"
+id: ex101_duration_on_study
+title: "Duration on study — Final analysis: Core part + Extension part (Full analysis set)"
 description: |
-  Build the analysis sets table corresponding to 14.1-2.1.f.
+  Build Table 14.1-2.3.f using the prepared duration dataset.
 
   Goal:
-  - columns:
-      Screen Failures/Not Assigned
-      Inclisiran-Inclisiran
-      Placebo-Inclisiran
-      Total
-  - rows:
-      Screened set
-      Randomized set
-      Full analysis set
-      Safety set
-      Open-label set
-  - use the mixed helper so that:
-      Screened set shows counts only
-      the other rows show n (%)
-  - focus on rtables layout only
+  - columns = Inclisiran-Inclisiran / Placebo-Inclisiran / Total
+  - top-left text = Duration on study (days)
+  - body rows = N, Mean (SD), Median, Q1-Q3, Min-Max
 
-starter_file: "ex101_analysis_sets_starter.R"
-reference_file: "ex101_analysis_sets_reference.R"
-timeout_sec: 20
+  Focus:
+  - split_cols_by()
+  - add_overall_col()
+  - analyze()
+  - append_topleft()
 
-shell_table: "Table 14.1-2.1.f"
+shell_table: "Table 14.1-2.3.f"
 shell_file: ""
 grading_mode: "table_text"
 helper_keys:
-  - a_set_row_cell
-  - a_npct_subj
-  - split_vs_summarize
-  - alt_counts_df
+  - a_num_shell
+timeout_sec: 20
+starter_file: "ex101_duration_on_study_starter.R"
+reference_file: "ex101_duration_on_study_reference.R"
