@@ -1,0 +1,26 @@
+
+id: ex102_teae_by_pt
+title: "TEAEs by preferred term — Final analysis: Extension part (Open-label set)"
+description: |
+  Build Table 14.3.1-2.3.f2.
+
+  Use:
+  - population: Open-label set
+  - TEAEs only
+  - rows: preferred term
+  - top row: Number of subjects with at least one event
+
+  Goal:
+  - columns = Inclisiran-Inclisiran / Placebo-Inclisiran
+  - counts = subject-level n (%)
+  - top-left text = Preferred term
+
+shell_table: "Table 14.3.1-2.3.f2"
+shell_file: "TFL Shells_Final Clinical Study Report.docx"
+grading_mode: "table_text"
+helper_keys:
+  - a_npct_subj
+timeout_sec: 20
+prep_file: "ex102_teae_by_pt_prep.R"
+starter_file: "ex102_teae_by_pt_starter.R"
+reference_file: "ex102_teae_by_pt_reference.R"
