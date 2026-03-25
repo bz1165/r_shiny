@@ -1,0 +1,25 @@
+helpers:
+  - key: a_npct_subj
+    title: "a_npct_subj() — group-level n (%)"
+    tags: ["rtables", "categorical", "n_pct", "summarize_row_groups"]
+    file: "util/helpers/a_npct_subj.txt"
+
+  - key: a_set_row_cell
+    title: "a_set_row_cell() — mixed count / n(%) row helper"
+    tags: ["rtables", "analysis_sets", "mixed_format", "screened_set"]
+    file: "util/helpers/a_set_row_cell.txt"
+
+  - key: s_patients_1line
+    title: "s_patients_1line() — top line for AE tables"
+    tags: ["rtables", "ae", "topline", "analyze"]
+    file: "util/helpers/s_patients_1line.txt"
+
+  - key: alt_counts_df
+    title: "alt_counts_df — column denominator control"
+    tags: ["rtables", "denominator", "column_counts", "alt_counts_df"]
+    file: "util/helpers/alt_counts_df.txt"
+
+  - key: split_vs_summarize
+    title: "split_rows_by() vs summarize_row_groups()"
+    tags: ["rtables", "layout", "structure", "summary"]
+    file: "util/helpers/split_vs_summarize.txt"
