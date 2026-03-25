@@ -55,52 +55,9 @@ get_code_input <- function(input, id) {
   input[[id]] %||% ""
 }
 
-is_blank_scalar <- function(x) {
-  is.null(x) ||
-    length(x) == 0 ||
-    is.na(x[[1]]) ||
-    !nzchar(as.character(x[[1]]))
-}
-
-resolve_user_id <- function(session_user = NULL) {
-  u <- session_user
-  if (is_blank_scalar(u)) u <- Sys.info()[["user"]]
-  if (is_blank_scalar(u)) u <- Sys.getenv("USER")
-  if (is_blank_scalar(u)) u <- "unknown_user"
-  as.character(u[[1]])
-}
-
-build_user_paths <- function(user_id) {
-  ra_root <- CONFIG$TRAINING_RA_ROOT
-
-  if (is.null(ra_root) || length(ra_root) == 0) {
-    stop("CONFIG$TRAINING_RA_ROOT is missing.")
-  }
-
-  ra_root <- as.character(ra_root[[1]])
-
-  if (!nzchar(ra_root)) {
-    stop("CONFIG$TRAINING_RA_ROOT is empty.")
-  }
-
-  if (!nzchar(user_id)) {
-    stop("Resolved user_id is empty.")
-  }
-
-  if (grepl("^/view/[^/]+_view/", ra_root)) {
-    ra_root <- sub(
-      "^/view/[^/]+_view/",
-      paste0("/view/", user_id, "_view/"),
-      ra_root
-    )
-  }
-
-  list(
-    user_id = user_id,
-    ra_root = ra_root,
-    save_dir = file.path(ra_root, "pgm", "saf"),
-    docs_dir = file.path(ra_root, "util", "documentation")
-  )
+read_optional_text <- function(path) {
+  if (is.null(path) || length(path) == 0 || !nzchar(path)) return(NULL)
+  paste(readLines(path, warn = FALSE), collapse = "\n")
 }
 
 save_exercise_code <- function(save_dir, exercise_id, code) {
@@ -218,6 +175,14 @@ ui <- fluidPage(
         color:#6b7280;
         font-size:13px;
       }
+      .scroll-pane {
+        max-height: 420px;
+        overflow: auto;
+        resize: both;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 6px;
+      }
     "))
   ),
 
@@ -247,7 +212,9 @@ ui <- fluidPage(
           tags$br(),
           "Reference code is hidden and used only for grading.",
           tags$br(),
-          "Runtime errors will include the expression line number when possible."
+          "Exercise drafts are kept in this session when you switch between exercises.",
+          tags$br(),
+          "Only Save writes code to GPS/VOB."
         )
       )
     ),
@@ -283,7 +250,10 @@ ui <- fluidPage(
             uiOutput("object_select_ui"),
             uiOutput("object_meta"),
             tags$hr(),
-            tableOutput("object_preview")
+            div(
+              class = "scroll-pane",
+              tableOutput("object_preview")
+            )
           )
         ),
 
@@ -319,6 +289,9 @@ server <- function(input, output, session) {
   docs_prefix <- reactiveVal(NULL)
   last_run <- reactiveVal(NULL)
 
+  # keep per-exercise drafts in current session
+  drafts <- reactiveValues()
+
   helper_filtered <- reactive({
     filter_helper_catalog(helper_catalog, input$helper_search %||% "")
   })
@@ -335,12 +308,17 @@ server <- function(input, output, session) {
     }
   }, ignoreInit = FALSE)
 
+  # load starter only first time per exercise; then keep draft
   observeEvent(current_ex(), {
     ex <- current_ex()
+    key <- ex$id
 
-    starter_txt <- readLines(ex$starter_file, warn = FALSE)
-    starter_code <- paste(starter_txt, collapse = "\n")
-    update_code_input(session, "editor", starter_code)
+    if (is.null(drafts[[key]])) {
+      starter_txt <- readLines(ex$starter_file, warn = FALSE)
+      drafts[[key]] <- paste(starter_txt, collapse = "\n")
+    }
+
+    update_code_input(session, "editor", drafts[[key]])
 
     output$ex_desc <- renderUI({
       div(
@@ -352,6 +330,14 @@ server <- function(input, output, session) {
     output$result <- renderText("")
     output$tbl_preview <- renderUI(tags$em("Run to preview output."))
   }, ignoreInit = FALSE)
+
+  # keep current editor content in draft for the current exercise
+  observe({
+    req(input$ex_id)
+    key <- input$ex_id
+    code_now <- get_code_input(input, "editor")
+    drafts[[key]] <- code_now
+  })
 
   output$exercise_meta <- renderUI({
     ex <- current_ex()
@@ -399,17 +385,17 @@ server <- function(input, output, session) {
       div(class = "meta-label", "Shell table"),
       div(class = "meta-value", shell_table),
 
+      if (!is.null(shell_link)) tagList(
+        div(class = "meta-label", "Documentation"),
+        div(class = "meta-value", shell_link)
+      ),
+
       div(class = "meta-label", "Grading mode"),
       div(class = "meta-value", grading_mode),
 
       if (length(helper_keys) > 0) tagList(
         div(class = "meta-label", "Recommended helpers"),
         div(class = "meta-value", paste(helper_keys, collapse = ", "))
-      ),
-
-      if (!is.null(shell_link)) tagList(
-        div(class = "meta-label", "Documentation"),
-        div(class = "meta-value", shell_link)
       )
     )
   })
@@ -467,11 +453,13 @@ server <- function(input, output, session) {
     ex <- current_ex()
     up <- user_paths()
     code <- get_code_input(input, "editor")
+    prep_code <- read_optional_text(ex$prep_file)
 
     out <- tryCatch(
       run_user_code(
         code = code,
         training_ra_root = up$ra_root,
+        prep_code = prep_code,
         timeout_sec = ex$timeout_sec
       ),
       error = function(e) {
@@ -497,11 +485,13 @@ server <- function(input, output, session) {
     up <- user_paths()
     code <- get_code_input(input, "editor")
     grading_mode <- ex$grading_mode %||% "table_text"
+    prep_code <- read_optional_text(ex$prep_file)
 
     out <- tryCatch(
       run_user_code(
         code = code,
         training_ra_root = up$ra_root,
+        prep_code = prep_code,
         timeout_sec = ex$timeout_sec
       ),
       error = function(e) {
@@ -521,6 +511,7 @@ server <- function(input, output, session) {
       run_reference_code(
         reference_file = ex$reference_file,
         training_ra_root = up$ra_root,
+        prep_code = prep_code,
         timeout_sec = ex$timeout_sec
       ),
       error = function(e) {
