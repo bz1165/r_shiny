@@ -346,7 +346,6 @@ server <- function(input, output, session) {
     )
   })
 
-  observeEvent(input$run, {
     ex <- current_ex()
     up <- user_paths()
     code <- get_code_input(input, "editor")
@@ -379,69 +378,73 @@ server <- function(input, output, session) {
     output$tbl_preview <- renderUI(preview_ui)
   })
 
-  observeEvent(input$submit, {
-    ex <- current_ex()
-    up <- user_paths()
-    code <- get_code_input(input, "editor")
-    grading_mode <- ex$grading_mode %||% "table_text"
+ observeEvent(input$submit, {
+  ex <- current_ex()
+  up <- user_paths()
+  code <- get_code_input(input, "editor")
+  grading_mode <- ex$grading_mode %||% "table_text"
 
-    out <- tryCatch(
-      run_user_code(
-        code = code,
-        training_ra_root = up$ra_root,
-        timeout_sec = ex$timeout_sec
-      ),
-      error = function(e) {
-        list(ok = FALSE, tbl = NULL, msg = paste0("Run failed:\n", conditionMessage(e)))
-      }
-    )
-
-    if (!isTRUE(out$ok)) {
-      output$result <- renderText(out$msg %||% "Unknown execution error.")
-      output$tbl_preview <- renderUI(tags$pre("No table (execution error)."))
-      return()
+  out <- tryCatch(
+    run_user_code(
+      code = code,
+      training_ra_root = up$ra_root,
+      timeout_sec = ex$timeout_sec
+    ),
+    error = function(e) {
+      list(ok = FALSE, tbl = NULL, msg = paste0("Run failed:\n", conditionMessage(e)))
     }
+  )
 
-    ref_out <- tryCatch(
-      run_reference_code(
-        reference_file = ex$reference_file,
-        training_ra_root = up$ra_root,
-        timeout_sec = ex$timeout_sec
-      ),
-      error = function(e) {
-        list(ok = FALSE, tbl = NULL, msg = paste0("Reference failed:\n", conditionMessage(e)))
-      }
+  if (!isTRUE(out$ok)) {
+    output$result <- renderText(out$msg %||% "Unknown execution error.")
+    output$tbl_preview <- renderUI(
+      tags$pre(out$msg %||% "No table (execution error).")
     )
+    return()
+  }
 
-    if (!isTRUE(ref_out$ok)) {
-      output$result <- renderText(ref_out$msg %||% "Unknown reference execution error.")
-      output$tbl_preview <- renderUI(tags$pre("Reference execution failed."))
-      return()
+  ref_out <- tryCatch(
+    run_reference_code(
+      reference_file = ex$reference_file,
+      training_ra_root = up$ra_root,
+      timeout_sec = ex$timeout_sec
+    ),
+    error = function(e) {
+      list(ok = FALSE, tbl = NULL, msg = paste0("Reference failed:\n", conditionMessage(e)))
     }
+  )
 
-    g <- tryCatch(
-      {
-        if (identical(grading_mode, "table_text")) {
-          grade_rtables_matrix(out$tbl, ref_out$tbl)
-        } else {
-          list(pass = FALSE, msg = paste0("Unsupported grading mode: ", grading_mode))
-        }
-      },
-      error = function(e) {
-        list(pass = FALSE, msg = paste0("Grading failed:\n", conditionMessage(e)))
-      }
+  if (!isTRUE(ref_out$ok)) {
+    output$result <- renderText(ref_out$msg %||% "Unknown reference execution error.")
+    output$tbl_preview <- renderUI(
+      tags$pre(ref_out$msg %||% "Reference execution failed.")
     )
+    return()
+  }
 
-    preview_ui <- tryCatch(
-      render_table_html(out$tbl),
-      error = function(e) {
-        tags$pre(paste0("Preview failed:\n", conditionMessage(e)))
+  g <- tryCatch(
+    {
+      if (identical(grading_mode, "table_text")) {
+        grade_rtables_matrix(out$tbl, ref_out$tbl)
+      } else {
+        list(pass = FALSE, msg = paste0("Unsupported grading mode: ", grading_mode))
       }
-    )
+    },
+    error = function(e) {
+      list(pass = FALSE, msg = paste0("Grading failed:\n", conditionMessage(e)))
+    }
+  )
 
-    output$result <- renderText(g$msg %||% "Unknown grading result.")
-    output$tbl_preview <- renderUI(preview_ui)
-  })
+  preview_ui <- tryCatch(
+    render_table_html(out$tbl),
+    error = function(e) {
+      tags$pre(paste0("Preview failed:\n", conditionMessage(e)))
+    }
+  )
+
+  output$result <- renderText(g$msg %||% "Unknown grading result.")
+  output$tbl_preview <- renderUI(preview_ui)
+})
 
   observeEvent(input$save, {
     ex <- current_ex()
