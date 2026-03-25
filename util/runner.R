@@ -6,8 +6,12 @@ source("util/config.R")
 
 .RUNNER_SETUP_CACHE <- new.env(parent = emptyenv())
 
+default_training_ra_root <- function() {
+  build_training_ra_root(resolve_user_id())
+}
+
 make_training_wd <- function(training_ra_root) {
-  # Must be a file path because company _setup.R / set_paths() expects a program path
+  # MUST be a FILE path because company set_paths() expects a program file path
   file.path(training_ra_root, "pgm", "shiny_runner.R")
 }
 
@@ -17,8 +21,31 @@ first_existing_path <- function(paths) {
   hit
 }
 
+# Mask the standard setup header in starter/reference code,
+# but preserve line count so downstream error line numbers still make sense.
+mask_setup_snippet <- function(code) {
+  if (is.null(code) || length(code) == 0 || !nzchar(code)) return(code)
+
+  pattern <- paste0(
+    "(?s)",
+    "^\\s*#\\s*Setup RA Environment.*?",
+    "wd\\s*<-\\s*ifelse\\s*\\(.*?\\)\\s*",
+    "source\\s*\\(\\s*paste0\\s*\\(.*?\\)\\s*\\)\\s*"
+  )
+
+  m <- regexpr(pattern, code, perl = TRUE)
+  if (m[1] == -1) return(code)
+
+  snippet <- regmatches(code, m)
+  n_lines <- length(strsplit(snippet, "\n", fixed = TRUE)[[1]])
+  replacement <- paste(rep("", n_lines), collapse = "\n")
+
+  regmatches(code, m) <- replacement
+  code
+}
+
 load_setup_env <- function(
-  training_ra_root = CONFIG$TRAINING_RA_ROOT,
+  training_ra_root = default_training_ra_root(),
   setup_timeout_sec = 90,
   force_reload = FALSE
 ) {
@@ -34,14 +61,14 @@ load_setup_env <- function(
   ))
 
   if (is.null(setup_path)) {
-    stop("Setup failed: cannot find _setup.R under util/ or utils/ in TRAINING_RA_ROOT.")
+    stop("Setup failed: cannot find _setup.R under util/ or utils/ in training RA root.")
   }
 
-  # Use globalenv() as parent so package search path behaves like normal interactive use
+  # Make package search path behave like normal interactive use
   setup_env <- new.env(parent = globalenv())
   setup_env$wd <- make_training_wd(training_ra_root)
 
-  # Soft fallback only if company setup references conflict_prefer before attaching conflicted
+  # Soft fallback only if company _setup.R references conflict_prefer before attaching conflicted
   if (!exists("conflict_prefer", envir = setup_env, inherits = TRUE)) {
     setup_env$conflict_prefer <- function(...) invisible(NULL)
   }
@@ -104,7 +131,7 @@ is_rtables_table <- function(x) {
 
 eval_in_training_env <- function(
   code,
-  training_ra_root = CONFIG$TRAINING_RA_ROOT,
+  training_ra_root = default_training_ra_root(),
   timeout_sec = 10,
   setup_timeout_sec = 90
 ) {
@@ -133,10 +160,15 @@ eval_in_training_env <- function(
   env$file.remove <- block
 
   tryCatch({
-    val <- eval_code_with_lines(code = code, env = env, timeout_sec = timeout_sec)
+    # IMPORTANT: mask the file-level setup snippet before evaluation.
+    # setup is already loaded from the GPS/VOB path by load_setup_env().
+    code2 <- mask_setup_snippet(code)
+
+    val <- eval_code_with_lines(code = code2, env = env, timeout_sec = timeout_sec)
+
     list(ok = TRUE, value = val, env = env, error = NULL)
   }, error = function(e) {
-    list(ok = FALSE, value = NULL, env = env, error = conditionMessage(e))
+    list(ok = FALSE, value = NULL, env = env, error = paste0("Code execution failed: ", conditionMessage(e)))
   })
 }
 
@@ -155,7 +187,7 @@ extract_table <- function(res) {
 
 run_user_code <- function(
   code,
-  training_ra_root = CONFIG$TRAINING_RA_ROOT,
+  training_ra_root = default_training_ra_root(),
   timeout_sec = 10
 ) {
   res <- eval_in_training_env(
@@ -183,7 +215,7 @@ run_user_code <- function(
 
 run_reference_code <- function(
   reference_file,
-  training_ra_root = CONFIG$TRAINING_RA_ROOT,
+  training_ra_root = default_training_ra_root(),
   timeout_sec = 10
 ) {
   code <- paste(readLines(reference_file, warn = FALSE), collapse = "\n")
