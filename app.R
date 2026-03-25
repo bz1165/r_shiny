@@ -14,8 +14,6 @@ source("util/exercise_io.R")
 source("util/helper_io.R")
 source("util/runner.R")
 source("util/grading_rtables.R")
-source("util/render_rtables.R")
-source("util/save_submission.R")
 
 `%||%` <- function(x, y) if (!is.null(x)) x else y
 
@@ -57,6 +55,51 @@ get_code_input <- function(input, id) {
   input[[id]] %||% ""
 }
 
+resolve_user_id <- function(session_user = NULL) {
+  u <- session_user
+  if (is.null(u) || !nzchar(u)) u <- Sys.info()[["user"]]
+  if (is.null(u) || !nzchar(u)) u <- "unknown_user"
+  u
+}
+
+build_user_paths <- function(user_id) {
+  ra_root <- CONFIG$TRAINING_RA_ROOT
+
+  if (grepl("^/view/[^/]+_view/", ra_root)) {
+    ra_root <- sub("^/view/[^/]+_view/", paste0("/view/", user_id, "_view/"), ra_root)
+  }
+
+  list(
+    user_id = user_id,
+    ra_root = ra_root,
+    save_dir = file.path(ra_root, "pgm", "saf"),
+    docs_dir = file.path(ra_root, "util", "documentation")
+  )
+}
+
+save_exercise_code <- function(save_dir, exercise_id, code) {
+  dir.create(save_dir, recursive = TRUE, showWarnings = FALSE)
+
+  existing <- list.files(
+    save_dir,
+    pattern = paste0("^", exercise_id, "_submission[0-9]+\\.R$"),
+    full.names = FALSE
+  )
+
+  next_n <- 1L
+  if (length(existing) > 0) {
+    nums <- suppressWarnings(
+      as.integer(sub(paste0("^", exercise_id, "_submission([0-9]+)\\.R$"), "\\1", existing))
+    )
+    nums <- nums[!is.na(nums)]
+    if (length(nums) > 0) next_n <- max(nums) + 1L
+  }
+
+  out <- file.path(save_dir, paste0(exercise_id, "_submission", next_n, ".R"))
+  writeLines(code, out, useBytes = TRUE)
+  normalizePath(out, winslash = "/", mustWork = FALSE)
+}
+
 normalize_key <- function(x) {
   tolower(gsub("[^0-9a-z]+", "", x %||% ""))
 }
@@ -91,6 +134,19 @@ default_helper_key <- function(filtered_catalog, ex) {
   hit <- recommended[recommended %in% filtered_catalog$key]
 
   if (length(hit) > 0) hit[1] else filtered_catalog$key[1]
+}
+
+render_tbl_text_ui <- function(tbl) {
+  txt <- paste(capture.output(print(tbl)), collapse = "\n")
+  tags$pre(
+    style = paste(
+      "white-space: pre-wrap;",
+      "font-family: Menlo, Monaco, Consolas, monospace;",
+      "font-size: 12px;",
+      "line-height: 1.35;"
+    ),
+    txt
+  )
 }
 
 ui <- fluidPage(
@@ -163,9 +219,9 @@ ui <- fluidPage(
           class = "small",
           if (!HAS_SHINYACE) "shinyAce not found: using base textarea fallback.",
           tags$br(),
-          "Starter code includes setup header for copy-paste run.",
+          "Reference code is hidden and used only for grading.",
           tags$br(),
-          "Reference code is hidden and used only for grading."
+          "Runtime errors will include the expression line number when possible."
         )
       )
     ),
@@ -192,6 +248,17 @@ ui <- fluidPage(
         tabPanel(
           "Grade",
           div(class = "box", verbatimTextOutput("result"))
+        ),
+
+        tabPanel(
+          "Objects",
+          div(
+            class = "box",
+            uiOutput("object_select_ui"),
+            uiOutput("object_meta"),
+            tags$hr(),
+            tableOutput("object_preview")
+          )
         ),
 
         tabPanel(
@@ -224,6 +291,7 @@ server <- function(input, output, session) {
   })
 
   docs_prefix <- reactiveVal(NULL)
+  last_run <- reactiveVal(NULL)
 
   helper_filtered <- reactive({
     filter_helper_catalog(helper_catalog, input$helper_search %||% "")
@@ -258,55 +326,6 @@ server <- function(input, output, session) {
     output$result <- renderText("")
     output$tbl_preview <- renderUI(tags$em("Run to preview output."))
   }, ignoreInit = FALSE)
-
-  output$helper_select_ui <- renderUI({
-    filtered <- helper_filtered()
-
-    if (is.null(filtered) || nrow(filtered) == 0) {
-      return(tags$div(class = "helper-empty", "No helpers found."))
-    }
-
-    ex <- current_ex()
-    selected <- input$helper_key
-
-    if (is.null(selected) || !selected %in% filtered$key) {
-      selected <- default_helper_key(filtered, ex)
-    }
-
-    selectInput(
-      "helper_key",
-      "Helper",
-      choices = helper_choices(filtered),
-      selected = selected
-    )
-  })
-
-  output$helper_preview <- renderUI({
-    filtered <- helper_filtered()
-
-    if (is.null(filtered) || nrow(filtered) == 0) {
-      return(tags$pre("No helper documentation available."))
-    }
-
-    ex <- current_ex()
-    selected_key <- input$helper_key
-
-    if (is.null(selected_key) || !selected_key %in% filtered$key) {
-      selected_key <- default_helper_key(filtered, ex)
-    }
-
-    txt <- read_helper_doc(CONFIG$APP_ROOT, helper_catalog, selected_key)
-
-    tags$pre(
-      style = paste(
-        "white-space: pre-wrap;",
-        "font-family: Menlo, Monaco, Consolas, monospace;",
-        "font-size: 12px;",
-        "line-height: 1.35;"
-      ),
-      txt
-    )
-  })
 
   output$exercise_meta <- renderUI({
     ex <- current_ex()
@@ -357,6 +376,55 @@ server <- function(input, output, session) {
     )
   })
 
+  output$helper_select_ui <- renderUI({
+    filtered <- helper_filtered()
+
+    if (is.null(filtered) || nrow(filtered) == 0) {
+      return(tags$div(class = "helper-empty", "No helpers found."))
+    }
+
+    ex <- current_ex()
+    selected <- input$helper_key
+
+    if (is.null(selected) || !selected %in% filtered$key) {
+      selected <- default_helper_key(filtered, ex)
+    }
+
+    selectInput(
+      "helper_key",
+      "Helper",
+      choices = helper_choices(filtered),
+      selected = selected
+    )
+  })
+
+  output$helper_preview <- renderUI({
+    filtered <- helper_filtered()
+
+    if (is.null(filtered) || nrow(filtered) == 0) {
+      return(tags$pre("No helper documentation available."))
+    }
+
+    ex <- current_ex()
+    selected_key <- input$helper_key
+
+    if (is.null(selected_key) || !selected_key %in% filtered$key) {
+      selected_key <- default_helper_key(filtered, ex)
+    }
+
+    txt <- read_helper_doc(CONFIG$APP_ROOT, helper_catalog, selected_key)
+
+    tags$pre(
+      style = paste(
+        "white-space: pre-wrap;",
+        "font-family: Menlo, Monaco, Consolas, monospace;",
+        "font-size: 12px;",
+        "line-height: 1.35;"
+      ),
+      txt
+    )
+  })
+
   observeEvent(input$run, {
     ex <- current_ex()
     up <- user_paths()
@@ -369,7 +437,7 @@ server <- function(input, output, session) {
         timeout_sec = ex$timeout_sec
       ),
       error = function(e) {
-        list(ok = FALSE, tbl = NULL, msg = paste0("Run failed:\n", conditionMessage(e)))
+        list(ok = FALSE, tbl = NULL, env = NULL, msg = paste0("Run failed:\n", conditionMessage(e)))
       }
     )
 
@@ -381,15 +449,9 @@ server <- function(input, output, session) {
       return()
     }
 
-    preview_ui <- tryCatch(
-      render_table_html(out$tbl),
-      error = function(e) {
-        tags$pre(paste0("Preview failed:\n", conditionMessage(e)))
-      }
-    )
-
+    last_run(out)
     output$result <- renderText("Preview generated. Submit to grade.")
-    output$tbl_preview <- renderUI(preview_ui)
+    output$tbl_preview <- renderUI(render_tbl_text_ui(out$tbl))
   })
 
   observeEvent(input$submit, {
@@ -405,7 +467,7 @@ server <- function(input, output, session) {
         timeout_sec = ex$timeout_sec
       ),
       error = function(e) {
-        list(ok = FALSE, tbl = NULL, msg = paste0("Run failed:\n", conditionMessage(e)))
+        list(ok = FALSE, tbl = NULL, env = NULL, msg = paste0("Run failed:\n", conditionMessage(e)))
       }
     )
 
@@ -424,7 +486,7 @@ server <- function(input, output, session) {
         timeout_sec = ex$timeout_sec
       ),
       error = function(e) {
-        list(ok = FALSE, tbl = NULL, msg = paste0("Reference failed:\n", conditionMessage(e)))
+        list(ok = FALSE, tbl = NULL, env = NULL, msg = paste0("Reference failed:\n", conditionMessage(e)))
       }
     )
 
@@ -439,6 +501,8 @@ server <- function(input, output, session) {
     g <- tryCatch(
       {
         if (identical(grading_mode, "table_text")) {
+          grade_rtables_text(out$tbl, ref_out$tbl)
+        } else if (identical(grading_mode, "table_matrix")) {
           grade_rtables_matrix(out$tbl, ref_out$tbl)
         } else {
           list(pass = FALSE, msg = paste0("Unsupported grading mode: ", grading_mode))
@@ -449,16 +513,58 @@ server <- function(input, output, session) {
       }
     )
 
-    preview_ui <- tryCatch(
-      render_table_html(out$tbl),
-      error = function(e) {
-        tags$pre(paste0("Preview failed:\n", conditionMessage(e)))
-      }
-    )
-
+    last_run(out)
     output$result <- renderText(g$msg %||% "Unknown grading result.")
-    output$tbl_preview <- renderUI(preview_ui)
+    output$tbl_preview <- renderUI(render_tbl_text_ui(out$tbl))
   })
+
+  object_names <- reactive({
+    out <- last_run()
+    if (is.null(out) || !isTRUE(out$ok) || is.null(out$env)) return(character())
+
+    nms <- ls(out$env, all.names = TRUE)
+
+    keep <- vapply(nms, function(nm) {
+      obj <- get(nm, envir = out$env)
+      is.data.frame(obj)
+    }, logical(1))
+
+    nms[keep]
+  })
+
+  output$object_select_ui <- renderUI({
+    nms <- object_names()
+
+    if (length(nms) == 0) {
+      return(tags$div(class = "muted", "No data.frame objects from last successful run."))
+    }
+
+    selectInput("object_name", "Intermediate dataset", choices = nms, selected = nms[1])
+  })
+
+  output$object_meta <- renderUI({
+    out <- last_run()
+    req(!is.null(out), isTRUE(out$ok), !is.null(out$env))
+    req(input$object_name)
+
+    obj <- get(input$object_name, envir = out$env)
+
+    tagList(
+      div(class = "meta-label", "Class"),
+      div(class = "meta-value", paste(class(obj), collapse = ", ")),
+      div(class = "meta-label", "Dimensions"),
+      div(class = "meta-value", paste(nrow(obj), "rows ×", ncol(obj), "columns"))
+    )
+  })
+
+  output$object_preview <- renderTable({
+    out <- last_run()
+    req(!is.null(out), isTRUE(out$ok), !is.null(out$env))
+    req(input$object_name)
+
+    obj <- get(input$object_name, envir = out$env)
+    utils::head(obj, 50)
+  }, striped = TRUE, bordered = TRUE, spacing = "xs")
 
   observeEvent(input$save, {
     ex <- current_ex()
@@ -466,7 +572,7 @@ server <- function(input, output, session) {
     code <- get_code_input(input, "editor")
 
     saved <- tryCatch(
-      save_submission(
+      save_exercise_code(
         save_dir = up$save_dir,
         exercise_id = ex$id,
         code = code
