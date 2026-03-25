@@ -55,18 +55,44 @@ get_code_input <- function(input, id) {
   input[[id]] %||% ""
 }
 
+is_blank_scalar <- function(x) {
+  is.null(x) ||
+    length(x) == 0 ||
+    is.na(x[[1]]) ||
+    !nzchar(as.character(x[[1]]))
+}
+
 resolve_user_id <- function(session_user = NULL) {
   u <- session_user
-  if (is.null(u) || !nzchar(u)) u <- Sys.info()[["user"]]
-  if (is.null(u) || !nzchar(u)) u <- "unknown_user"
-  u
+  if (is_blank_scalar(u)) u <- Sys.info()[["user"]]
+  if (is_blank_scalar(u)) u <- Sys.getenv("USER")
+  if (is_blank_scalar(u)) u <- "unknown_user"
+  as.character(u[[1]])
 }
 
 build_user_paths <- function(user_id) {
   ra_root <- CONFIG$TRAINING_RA_ROOT
 
+  if (is.null(ra_root) || length(ra_root) == 0) {
+    stop("CONFIG$TRAINING_RA_ROOT is missing.")
+  }
+
+  ra_root <- as.character(ra_root[[1]])
+
+  if (!nzchar(ra_root)) {
+    stop("CONFIG$TRAINING_RA_ROOT is empty.")
+  }
+
+  if (!nzchar(user_id)) {
+    stop("Resolved user_id is empty.")
+  }
+
   if (grepl("^/view/[^/]+_view/", ra_root)) {
-    ra_root <- sub("^/view/[^/]+_view/", paste0("/view/", user_id, "_view/"), ra_root)
+    ra_root <- sub(
+      "^/view/[^/]+_view/",
+      paste0("/view/", user_id, "_view/"),
+      ra_root
+    )
   }
 
   list(
@@ -329,7 +355,19 @@ server <- function(input, output, session) {
 
   output$exercise_meta <- renderUI({
     ex <- current_ex()
-    up <- user_paths()
+
+    up <- tryCatch(
+      user_paths(),
+      error = function(e) {
+        list(
+          user_id = "unknown_user",
+          ra_root = paste0("Path error: ", conditionMessage(e)),
+          save_dir = "",
+          docs_dir = ""
+        )
+      }
+    )
+
     pfx <- docs_prefix()
 
     shell_table <- ex$shell_table %||% "Not specified"
