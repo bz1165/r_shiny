@@ -1,0 +1,59 @@
+a_num_shell()
+
+Purpose
+-------
+Reusable helper for a one-block continuous summary table in rtables.
+
+What it returns
+---------------
+Rows:
+- N
+- Mean (SD)
+- Median
+- Q1-Q3
+- Min-Max
+
+Input
+-----
+x : numeric vector for the current cell / column slice.
+
+Key idea
+--------
+This helper is best used inside analyze() when you want one continuous variable
+to expand into several display rows.
+
+Typical pattern
+---------------
+basic_table(...) %>%
+  split_cols_by("ARM") %>%
+  add_overall_col("Total") %>%
+  analyze("AVAL", afun = a_num_shell, show_labels = "hidden") %>%
+  append_topleft("Some continuous summary title")
+
+Function
+--------
+a_num_shell <- function(x) {
+  x <- x[!is.na(x)]
+  qs <- quantile(x, probs = c(0.25, 0.75), names = FALSE, type = 2)
+
+  in_rows(
+    "N"         = length(x),
+    "Mean (SD)" = rcell(c(mean(x), sd(x)), format = "xx.x (xx.xx)"),
+    "Median"    = rcell(median(x), format = "xx.x"),
+    "Q1-Q3"     = rcell(qs, format = "xx.x - xx.x"),
+    "Min-Max"   = rcell(range(x), format = "xx - xx")
+  )
+}
+
+When to reuse
+-------------
+- Duration on study
+- Exposure duration
+- Continuous baseline characteristics
+- Lab/vital sign one-block summaries
+
+Notes
+-----
+- Quartiles use type = 2 here to match the training example.
+- Mean/median/quartiles use 1 decimal; SD uses 2 decimals.
+- Min/Max use integer-style display in this version.
