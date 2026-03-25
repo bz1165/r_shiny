@@ -84,6 +84,15 @@ resolve_shell_file <- function(ex, docs_dir) {
   if (length(idx) > 0) files[idx[1]] else NULL
 }
 
+default_helper_key <- function(filtered_catalog, ex) {
+  if (is.null(filtered_catalog) || nrow(filtered_catalog) == 0) return(NULL)
+
+  recommended <- ex$helper_keys %||% character()
+  hit <- recommended[recommended %in% filtered_catalog$key]
+
+  if (length(hit) > 0) hit[1] else filtered_catalog$key[1]
+}
+
 ui <- fluidPage(
   tags$head(
     tags$style(HTML("
@@ -103,22 +112,29 @@ ui <- fluidPage(
         flex-wrap:wrap;
         align-items:center;
       }
-      .small { font-size:12px; color:#6b7280; }
+      .small {
+        font-size:12px;
+        color:#6b7280;
+      }
       .meta-label {
-        font-size: 12px;
-        color: #6b7280;
-        margin-top: 8px;
-        margin-bottom: 2px;
+        font-size:12px;
+        color:#6b7280;
+        margin-top:8px;
+        margin-bottom:2px;
       }
       .meta-value {
-        font-size: 13px;
-        color: #111827;
-        word-break: break-word;
+        font-size:13px;
+        color:#111827;
+        word-break:break-word;
       }
       pre {
         white-space: pre-wrap;
         word-break: break-word;
         margin: 0;
+      }
+      .helper-empty {
+        color:#6b7280;
+        font-size:13px;
       }
     "))
   ),
@@ -167,14 +183,17 @@ ui <- fluidPage(
       4,
       tabsetPanel(
         type = "tabs",
+
         tabPanel(
           "Preview",
           div(class = "box", uiOutput("tbl_preview"))
         ),
+
         tabPanel(
           "Grade",
           div(class = "box", verbatimTextOutput("result"))
         ),
+
         tabPanel(
           "Helpers",
           div(
@@ -206,7 +225,6 @@ server <- function(input, output, session) {
 
   docs_prefix <- reactiveVal(NULL)
 
-  # Filter helpers; empty search should show ALL helpers
   helper_filtered <- reactive({
     filter_helper_catalog(helper_catalog, input$helper_search %||% "")
   })
@@ -216,7 +234,7 @@ server <- function(input, output, session) {
 
     if (dir.exists(up$docs_dir)) {
       prefix <- paste0("docs_", gsub("[^A-Za-z0-9_]", "_", up$user_id))
-      addResourcePath(prefix, up$docs_dir)
+      try(addResourcePath(prefix, up$docs_dir), silent = TRUE)
       docs_prefix(prefix)
     } else {
       docs_prefix(NULL)
@@ -245,20 +263,14 @@ server <- function(input, output, session) {
     filtered <- helper_filtered()
 
     if (is.null(filtered) || nrow(filtered) == 0) {
-      return(tags$div(class = "muted", "No helpers found."))
+      return(tags$div(class = "helper-empty", "No helpers found."))
     }
 
+    ex <- current_ex()
     selected <- input$helper_key
-    if (is.null(selected) || !selected %in% filtered$key) {
-      ex <- current_ex()
-      recommended <- ex$helper_keys %||% character()
-      hit <- recommended[recommended %in% filtered$key]
 
-      if (length(hit) > 0) {
-        selected <- hit[1]
-      } else {
-        selected <- filtered$key[1]
-      }
+    if (is.null(selected) || !selected %in% filtered$key) {
+      selected <- default_helper_key(filtered, ex)
     }
 
     selectInput(
@@ -276,17 +288,11 @@ server <- function(input, output, session) {
       return(tags$pre("No helper documentation available."))
     }
 
+    ex <- current_ex()
     selected_key <- input$helper_key
-    if (is.null(selected_key) || !selected_key %in% filtered$key) {
-      ex <- current_ex()
-      recommended <- ex$helper_keys %||% character()
-      hit <- recommended[recommended %in% filtered$key]
 
-      if (length(hit) > 0) {
-        selected_key <- hit[1]
-      } else {
-        selected_key <- filtered$key[1]
-      }
+    if (is.null(selected_key) || !selected_key %in% filtered$key) {
+      selected_key <- default_helper_key(filtered, ex)
     }
 
     txt <- read_helper_doc(CONFIG$APP_ROOT, helper_catalog, selected_key)
@@ -312,10 +318,15 @@ server <- function(input, output, session) {
     helper_keys <- ex$helper_keys %||% character()
 
     shell_doc <- resolve_shell_file(ex, up$docs_dir)
+
     shell_link <- NULL
     if (!is.null(pfx) && !is.null(shell_doc)) {
       shell_href <- paste0("/", pfx, "/", utils::URLencode(shell_doc))
-      shell_link <- tags$a(href = shell_href, target = "_blank", "Open shell / documentation")
+      shell_link <- tags$a(
+        href = shell_href,
+        target = "_blank",
+        "Open shell / documentation"
+      )
     }
 
     tagList(
@@ -346,6 +357,7 @@ server <- function(input, output, session) {
     )
   })
 
+  observeEvent(input$run, {
     ex <- current_ex()
     up <- user_paths()
     code <- get_code_input(input, "editor")
@@ -363,7 +375,9 @@ server <- function(input, output, session) {
 
     if (!isTRUE(out$ok)) {
       output$result <- renderText(out$msg %||% "Unknown execution error.")
-      output$tbl_preview <- renderUI(tags$pre("No table (execution error)."))
+      output$tbl_preview <- renderUI(
+        tags$pre(out$msg %||% "No table (execution error).")
+      )
       return()
     }
 
@@ -378,73 +392,73 @@ server <- function(input, output, session) {
     output$tbl_preview <- renderUI(preview_ui)
   })
 
- observeEvent(input$submit, {
-  ex <- current_ex()
-  up <- user_paths()
-  code <- get_code_input(input, "editor")
-  grading_mode <- ex$grading_mode %||% "table_text"
+  observeEvent(input$submit, {
+    ex <- current_ex()
+    up <- user_paths()
+    code <- get_code_input(input, "editor")
+    grading_mode <- ex$grading_mode %||% "table_text"
 
-  out <- tryCatch(
-    run_user_code(
-      code = code,
-      training_ra_root = up$ra_root,
-      timeout_sec = ex$timeout_sec
-    ),
-    error = function(e) {
-      list(ok = FALSE, tbl = NULL, msg = paste0("Run failed:\n", conditionMessage(e)))
-    }
-  )
-
-  if (!isTRUE(out$ok)) {
-    output$result <- renderText(out$msg %||% "Unknown execution error.")
-    output$tbl_preview <- renderUI(
-      tags$pre(out$msg %||% "No table (execution error).")
-    )
-    return()
-  }
-
-  ref_out <- tryCatch(
-    run_reference_code(
-      reference_file = ex$reference_file,
-      training_ra_root = up$ra_root,
-      timeout_sec = ex$timeout_sec
-    ),
-    error = function(e) {
-      list(ok = FALSE, tbl = NULL, msg = paste0("Reference failed:\n", conditionMessage(e)))
-    }
-  )
-
-  if (!isTRUE(ref_out$ok)) {
-    output$result <- renderText(ref_out$msg %||% "Unknown reference execution error.")
-    output$tbl_preview <- renderUI(
-      tags$pre(ref_out$msg %||% "Reference execution failed.")
-    )
-    return()
-  }
-
-  g <- tryCatch(
-    {
-      if (identical(grading_mode, "table_text")) {
-        grade_rtables_matrix(out$tbl, ref_out$tbl)
-      } else {
-        list(pass = FALSE, msg = paste0("Unsupported grading mode: ", grading_mode))
+    out <- tryCatch(
+      run_user_code(
+        code = code,
+        training_ra_root = up$ra_root,
+        timeout_sec = ex$timeout_sec
+      ),
+      error = function(e) {
+        list(ok = FALSE, tbl = NULL, msg = paste0("Run failed:\n", conditionMessage(e)))
       }
-    },
-    error = function(e) {
-      list(pass = FALSE, msg = paste0("Grading failed:\n", conditionMessage(e)))
-    }
-  )
+    )
 
-  preview_ui <- tryCatch(
-    render_table_html(out$tbl),
-    error = function(e) {
-      tags$pre(paste0("Preview failed:\n", conditionMessage(e)))
+    if (!isTRUE(out$ok)) {
+      output$result <- renderText(out$msg %||% "Unknown execution error.")
+      output$tbl_preview <- renderUI(
+        tags$pre(out$msg %||% "No table (execution error).")
+      )
+      return()
     }
-  )
 
-  output$result <- renderText(g$msg %||% "Unknown grading result.")
-  output$tbl_preview <- renderUI(preview_ui)
-})
+    ref_out <- tryCatch(
+      run_reference_code(
+        reference_file = ex$reference_file,
+        training_ra_root = up$ra_root,
+        timeout_sec = ex$timeout_sec
+      ),
+      error = function(e) {
+        list(ok = FALSE, tbl = NULL, msg = paste0("Reference failed:\n", conditionMessage(e)))
+      }
+    )
+
+    if (!isTRUE(ref_out$ok)) {
+      output$result <- renderText(ref_out$msg %||% "Unknown reference execution error.")
+      output$tbl_preview <- renderUI(
+        tags$pre(ref_out$msg %||% "Reference execution failed.")
+      )
+      return()
+    }
+
+    g <- tryCatch(
+      {
+        if (identical(grading_mode, "table_text")) {
+          grade_rtables_matrix(out$tbl, ref_out$tbl)
+        } else {
+          list(pass = FALSE, msg = paste0("Unsupported grading mode: ", grading_mode))
+        }
+      },
+      error = function(e) {
+        list(pass = FALSE, msg = paste0("Grading failed:\n", conditionMessage(e)))
+      }
+    )
+
+    preview_ui <- tryCatch(
+      render_table_html(out$tbl),
+      error = function(e) {
+        tags$pre(paste0("Preview failed:\n", conditionMessage(e)))
+      }
+    )
+
+    output$result <- renderText(g$msg %||% "Unknown grading result.")
+    output$tbl_preview <- renderUI(preview_ui)
+  })
 
   observeEvent(input$save, {
     ex <- current_ex()
