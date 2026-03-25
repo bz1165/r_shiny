@@ -4,12 +4,10 @@ wd <- ifelse(
   rstudioapi::getSourceEditorContext()$path,
   system("echo $PWD", intern = TRUE)
 )
-source(paste0(gsub(r"((^.*/vob(/\\w+){3}).*$)", r"(\\1)", wd), "/util/_setup.R"))
+source(paste0(gsub(r"((^.*/vob(/\w+){3}).*$)", r"(\1)", wd), "/util/_setup.R"))
 
 library(dplyr)
-library(stringr)
 library(rtables)
-library(lubridate)
 
 # Helper reused from training --------------------------------------------------
 a_num_shell <- function(x) {
@@ -28,46 +26,14 @@ a_num_shell <- function(x) {
 # Data prep --------------------------------------------------------------------
 adsl_raw <- read_df(analysis.adsl)
 
-pick_first_chr <- function(df, candidates, default = NA_character_) {
-  hit <- candidates[candidates %in% names(df)][1]
-  if (is.na(hit) || !nzchar(hit)) return(rep(default, nrow(df)))
-  as.character(df[[hit]])
-}
-
-pick_first_date <- function(df, candidates) {
-  hit <- candidates[candidates %in% names(df)][1]
-  if (is.na(hit) || !nzchar(hit)) return(rep(as.Date(NA), nrow(df)))
-
-  x <- df[[hit]]
-
-  if (inherits(x, "Date")) return(x)
-  if (inherits(x, "POSIXct") || inherits(x, "POSIXt")) return(as.Date(x))
-
-  x_chr <- as.character(x)
-  x_chr[x_chr %in% c("", "NA", ".")] <- NA_character_
-
-  out <- suppressWarnings(as.Date(x_chr))
-  bad <- is.na(out) & !is.na(x_chr)
-  if (any(bad)) {
-    out[bad] <- suppressWarnings(as.Date(parse_date_time(
-      x_chr[bad],
-      orders = c("Ymd", "d b Y", "dB Y", "dmy", "dmy HMS", "Ymd HMS")
-    )))
-  }
-  out
-}
-
 adsl_fas <- adsl_raw %>%
   transmute(
-    USUBJID = as.character(usubjid),
-    FASFL   = toupper(pick_first_chr(adsl_raw, c("fasfl"))),
-    TRTSEQP = str_replace_all(
-      str_squish(pick_first_chr(adsl_raw, c("trtseqp", "trt01p", "arm"))),
-      "\\s*-\\s*",
-      "-"
-    ),
-    FIRSTDT = pick_first_date(adsl_raw, c("rfstdtc", "rfstdt", "trtsdt", "trtstdt")),
-    LASTDT  = pick_first_date(adsl_raw, c("lastsvdt", "eosdt", "eot02dt", "acutdt"))
+    USUBJID  = as.character(usubjid),
+    FASFL    = toupper(as.character(fasfl)),
+    TRTSEQP  = as.character(trtseqp),
+    TRTSDT   = trtsdt,
+    LASTSVDT = lastsvdt,
+    EOSDT    = eosdt
   ) %>%
   filter(FASFL == "Y") %>%
   mutate(
@@ -76,9 +42,10 @@ adsl_fas <- adsl_raw %>%
       TRTSEQP == "Placebo-Inclisiran" ~ "Placebo-Inclisiran",
       TRUE ~ NA_character_
     ),
-    DURSTDY = as.integer(LASTDT - FIRSTDT + 1)
+    LASTDT = coalesce(LASTSVDT, EOSDT),
+    DURSTDY = as.integer(LASTDT - TRTSDT + 1)
   ) %>%
-  filter(!is.na(ARM), !is.na(DURSTDY)) %>%
+  filter(!is.na(ARM), !is.na(TRTSDT), !is.na(LASTDT), !is.na(DURSTDY)) %>%
   mutate(
     ARM = factor(
       ARM,
