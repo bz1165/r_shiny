@@ -1,21 +1,23 @@
 id: ex101_duration_on_study
 title: "Duration on study — Final analysis: Core part + Extension part (Full analysis set)"
 description: |
-  Build Table 14.1-2.3.f using the prepared duration dataset.
+  Build the duration on study table for overall study using FAS.
+
+  SAP rule:
+  Duration on study = date of last known visit on study – date of study Day 1 + 1
+
+  Use:
+  - population: FAS
+  - treatment group: TRTSEQP
+  - first dose date: TRTSDT
+  - last known visit: LASTSVDT + EOSDT
 
   Goal:
   - columns = Inclisiran-Inclisiran / Placebo-Inclisiran / Total
-  - top-left text = Duration on study (days)
   - body rows = N, Mean (SD), Median, Q1-Q3, Min-Max
-
-  Focus:
-  - split_cols_by()
-  - add_overall_col()
-  - analyze()
-  - append_topleft()
+  - top-left text = Duration on study (days)
 
 shell_table: "Table 14.1-2.3.f"
-shell_file: ""
 grading_mode: "table_text"
 helper_keys:
   - a_num_shell
