@@ -2,7 +2,14 @@ suppressPackageStartupMessages({
   library(rtables)
 })
 
+source("util/config.R")
+
 .RUNNER_SETUP_CACHE <- new.env(parent = emptyenv())
+
+make_training_wd <- function(training_ra_root) {
+  # Must be a file path because company _setup.R / set_paths() expects a program path
+  file.path(training_ra_root, "pgm", "shiny_runner.R")
+}
 
 first_existing_path <- function(paths) {
   hit <- paths[file.exists(paths)][1]
@@ -10,27 +17,11 @@ first_existing_path <- function(paths) {
   hit
 }
 
-make_training_wd <- function(training_ra_root) {
-  # MUST be a FILE path (company set_paths expects program path)
-  file.path(training_ra_root, "pgm", "shiny_runner.R")
-}
-
-strip_setup_snippet <- function(code) {
-  if (is.null(code) || !nzchar(code)) return(code)
-
-  pattern <- paste0(
-    "(?s)",
-    "^\\s*#\\s*Setup RA Environment.*?",
-    "wd\\s*<-\\s*ifelse\\s*\\(.*?\\)\\s*",
-    "source\\s*\\(\\s*paste0\\s*\\(.*?\\)\\s*\\)\\s*"
-  )
-
-  out <- sub(pattern, "", code, perl = TRUE)
-  out <- sub("^\\s+", "", out, perl = TRUE)
-  out
-}
-
-load_setup_env <- function(training_ra_root, setup_timeout_sec = 90, force_reload = FALSE) {
+load_setup_env <- function(
+  training_ra_root = CONFIG$TRAINING_RA_ROOT,
+  setup_timeout_sec = 90,
+  force_reload = FALSE
+) {
   cache_key <- gsub("[^A-Za-z0-9_]", "_", training_ra_root)
 
   if (!force_reload && exists(cache_key, envir = .RUNNER_SETUP_CACHE, inherits = FALSE)) {
@@ -43,12 +34,14 @@ load_setup_env <- function(training_ra_root, setup_timeout_sec = 90, force_reloa
   ))
 
   if (is.null(setup_path)) {
-    stop("Setup failed: cannot find _setup.R under util/ or utils/ in training RA root.")
+    stop("Setup failed: cannot find _setup.R under util/ or utils/ in TRAINING_RA_ROOT.")
   }
 
+  # Use globalenv() as parent so package search path behaves like normal interactive use
   setup_env <- new.env(parent = globalenv())
   setup_env$wd <- make_training_wd(training_ra_root)
 
+  # Soft fallback only if company setup references conflict_prefer before attaching conflicted
   if (!exists("conflict_prefer", envir = setup_env, inherits = TRUE)) {
     setup_env$conflict_prefer <- function(...) invisible(NULL)
   }
@@ -71,16 +64,55 @@ load_setup_env <- function(training_ra_root, setup_timeout_sec = 90, force_reloa
 
   st0 <- get("st", envir = setup_env, inherits = TRUE)
   if (is.null(st0$analysis) || is.null(st0$derived)) {
-    stop("Setup loaded but st$analysis/st$derived missing. Please set them in _setup.R.")
+    stop("Setup loaded but st$analysis/st$derived are missing.")
   }
 
   assign(cache_key, setup_env, envir = .RUNNER_SETUP_CACHE)
   setup_env
 }
 
-eval_in_training_env <- function(code, training_ra_root, timeout_sec = 10, setup_timeout_sec = 90) {
+# Evaluate line-by-line so runtime errors can be annotated with source line number
+eval_code_with_lines <- function(code, env, timeout_sec = 10) {
+  exprs <- parse(text = code, keep.source = TRUE)
+  srcrefs <- attr(exprs, "srcref")
+
+  last_value <- NULL
+
+  setTimeLimit(elapsed = timeout_sec, transient = TRUE)
+  on.exit(setTimeLimit(elapsed = Inf, transient = FALSE), add = TRUE)
+
+  for (i in seq_along(exprs)) {
+    line_no <- i
+    if (!is.null(srcrefs) && length(srcrefs) >= i && !is.null(srcrefs[[i]])) {
+      line_no <- srcrefs[[i]][1]
+    }
+
+    last_value <- tryCatch(
+      eval(exprs[[i]], envir = env),
+      error = function(e) {
+        stop(sprintf("Line %s: %s", line_no, conditionMessage(e)), call. = FALSE)
+      }
+    )
+  }
+
+  last_value
+}
+
+is_rtables_table <- function(x) {
+  inherits(x, c("TableTree", "VTableTree"))
+}
+
+eval_in_training_env <- function(
+  code,
+  training_ra_root = CONFIG$TRAINING_RA_ROOT,
+  timeout_sec = 10,
+  setup_timeout_sec = 90
+) {
   setup_env <- tryCatch(
-    load_setup_env(training_ra_root = training_ra_root, setup_timeout_sec = setup_timeout_sec),
+    load_setup_env(
+      training_ra_root = training_ra_root,
+      setup_timeout_sec = setup_timeout_sec
+    ),
     error = function(e) {
       return(list(ok = FALSE, value = NULL, env = NULL, error = conditionMessage(e)))
     }
@@ -93,6 +125,7 @@ eval_in_training_env <- function(code, training_ra_root, timeout_sec = 10, setup
   env <- new.env(parent = setup_env)
   env$wd <- make_training_wd(training_ra_root)
 
+  # Minimal safety blocks
   block <- function(...) stop("Blocked in training sandbox.")
   env$system <- block
   env$system2 <- block
@@ -100,32 +133,31 @@ eval_in_training_env <- function(code, training_ra_root, timeout_sec = 10, setup
   env$file.remove <- block
 
   tryCatch({
-    setTimeLimit(elapsed = timeout_sec, transient = TRUE)
-    on.exit(setTimeLimit(elapsed = Inf, transient = FALSE), add = TRUE)
-
-    code2 <- strip_setup_snippet(code)
-
-    val <- eval(parse(text = code2), envir = env)
+    val <- eval_code_with_lines(code = code, env = env, timeout_sec = timeout_sec)
     list(ok = TRUE, value = val, env = env, error = NULL)
   }, error = function(e) {
-    list(ok = FALSE, value = NULL, env = env, error = paste0("Code execution failed: ", conditionMessage(e)))
+    list(ok = FALSE, value = NULL, env = env, error = conditionMessage(e))
   })
 }
 
 extract_table <- function(res) {
   if (!res$ok) return(NULL)
 
-  if (inherits(res$value, "TableTree")) return(res$value)
+  if (is_rtables_table(res$value)) return(res$value)
 
   if (!is.null(res$env) && exists("tbl", envir = res$env, inherits = TRUE)) {
     t <- get("tbl", envir = res$env, inherits = TRUE)
-    if (inherits(t, "TableTree")) return(t)
+    if (is_rtables_table(t)) return(t)
   }
 
   NULL
 }
 
-run_user_code <- function(code, training_ra_root, timeout_sec = 10) {
+run_user_code <- function(
+  code,
+  training_ra_root = CONFIG$TRAINING_RA_ROOT,
+  timeout_sec = 10
+) {
   res <- eval_in_training_env(
     code = code,
     training_ra_root = training_ra_root,
@@ -133,7 +165,7 @@ run_user_code <- function(code, training_ra_root, timeout_sec = 10) {
   )
 
   if (!res$ok) {
-    return(list(ok = FALSE, tbl = NULL, msg = res$error))
+    return(list(ok = FALSE, tbl = NULL, env = res$env, msg = res$error))
   }
 
   tbl <- extract_table(res)
@@ -141,17 +173,19 @@ run_user_code <- function(code, training_ra_root, timeout_sec = 10) {
     return(list(
       ok = FALSE,
       tbl = NULL,
-      msg = paste(
-        "Code ran but no rtables TableTree was returned.",
-        "Please ensure your final object is `tbl` (build_table output)."
-      )
+      env = res$env,
+      msg = "Code ran but no rtables table object was returned. Please ensure your final object is `tbl` (build_table output)."
     ))
   }
 
-  list(ok = TRUE, tbl = tbl, msg = "OK")
+  list(ok = TRUE, tbl = tbl, env = res$env, msg = "OK")
 }
 
-run_reference_code <- function(reference_file, training_ra_root, timeout_sec = 10) {
+run_reference_code <- function(
+  reference_file,
+  training_ra_root = CONFIG$TRAINING_RA_ROOT,
+  timeout_sec = 10
+) {
   code <- paste(readLines(reference_file, warn = FALSE), collapse = "\n")
   run_user_code(
     code = code,
