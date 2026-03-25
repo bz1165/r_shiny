@@ -40,6 +40,12 @@ load_exercise <- function(app_root, ex_index, ex_id) {
         ex$starter_file <- normalizePath(file.path(base_dir, ex$starter_file), winslash = "/", mustWork = TRUE)
         ex$reference_file <- normalizePath(file.path(base_dir, ex$reference_file), winslash = "/", mustWork = TRUE)
 
+        if (!is.null(ex$prep_file) && nzchar(ex$prep_file)) {
+          ex$prep_file <- normalizePath(file.path(base_dir, ex$prep_file), winslash = "/", mustWork = TRUE)
+        } else {
+          ex$prep_file <- NULL
+        }
+
         return(ex)
       }
     }
