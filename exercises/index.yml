@@ -1,8 +1,8 @@
 rtables:
-  - id: ex101_analysis_sets
-    title: "Ex101 — Analysis sets (RAS / FAS / SAF / OLS)"
-    yml: "exercises/rtables/ex101_analysis_sets.yml"
+  - id: ex101_duration_on_study
+    title: "Ex101 — Duration on study (14.1-2.3.f)"
+    yml: "exercises/rtables/ex101_duration_on_study.yml"
 
-  - id: ex201_teae_socpt
-    title: "Ex201 — TEAE by SOC/PT"
-    yml: "exercises/rtables/ex201_teae_socpt.yml"
+  - id: ex102_protocol_deviations
+    title: "Ex102 — Protocol deviations (14.1-3.1.f2)"
+    yml: "exercises/rtables/ex102_protocol_deviations.yml"
