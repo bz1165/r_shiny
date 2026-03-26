@@ -87,15 +87,15 @@ normalize_key <- function(x) {
   tolower(gsub("[^0-9a-z]+", "", x %||% ""))
 }
 
-resolve_shell_file <- function(ex, docs_dir) {
-  if (!dir.exists(docs_dir)) return(NULL)
+find_shell_doc_path <- function(ex, docs_dir) {
+  if (is.null(docs_dir) || !dir.exists(docs_dir)) return(NULL)
 
   files <- list.files(docs_dir, full.names = FALSE)
   if (length(files) == 0) return(NULL)
 
   shell_file <- ex$shell_file %||% ""
   if (nzchar(shell_file) && shell_file %in% files) {
-    return(shell_file)
+    return(file.path(docs_dir, shell_file))
   }
 
   shell_table <- ex$shell_table %||% ""
@@ -107,7 +107,16 @@ resolve_shell_file <- function(ex, docs_dir) {
   norm_files <- vapply(files, normalize_key, character(1))
   idx <- which(grepl(key, norm_files, fixed = TRUE))
 
-  if (length(idx) > 0) files[idx[1]] else NULL
+  if (length(idx) > 0) {
+    return(file.path(docs_dir, files[idx[1]]))
+  }
+
+  NULL
+}
+
+safe_basename <- function(path) {
+  if (is.null(path) || length(path) == 0 || !nzchar(path)) return("")
+  basename(path)
 }
 
 default_helper_key <- function(filtered_catalog, ex) {
@@ -286,39 +295,36 @@ server <- function(input, output, session) {
     load_exercise(CONFIG$APP_ROOT, ex_index, input$ex_id)
   })
 
-  docs_prefix <- reactiveVal(NULL)
-  last_run <- reactiveVal(NULL)
+  shell_doc_path <- reactive({
+    ex <- current_ex()
+    up <- user_paths()
+    find_shell_doc_path(ex, up$docs_dir)
+  })
 
-  # keep per-exercise drafts in current session
+  last_run <- reactiveVal(NULL)
+  active_ex_id <- reactiveVal(NULL)
   drafts <- reactiveValues()
 
   helper_filtered <- reactive({
     filter_helper_catalog(helper_catalog, input$helper_search %||% "")
   })
 
-  observeEvent(user_paths(), {
-    up <- user_paths()
-
-    if (dir.exists(up$docs_dir)) {
-      prefix <- paste0("docs_", gsub("[^A-Za-z0-9_]", "_", up$user_id))
-      try(addResourcePath(prefix, up$docs_dir), silent = TRUE)
-      docs_prefix(prefix)
-    } else {
-      docs_prefix(NULL)
-    }
-  }, ignoreInit = FALSE)
-
-  # load starter only first time per exercise; then keep draft
   observeEvent(current_ex(), {
     ex <- current_ex()
-    key <- ex$id
+    new_id <- ex$id
+    old_id <- isolate(active_ex_id())
 
-    if (is.null(drafts[[key]])) {
-      starter_txt <- readLines(ex$starter_file, warn = FALSE)
-      drafts[[key]] <- paste(starter_txt, collapse = "\n")
+    if (!is.null(old_id) && nzchar(old_id)) {
+      drafts[[old_id]] <- get_code_input(input, "editor")
     }
 
-    update_code_input(session, "editor", drafts[[key]])
+    if (is.null(drafts[[new_id]])) {
+      starter_txt <- readLines(ex$starter_file, warn = FALSE)
+      drafts[[new_id]] <- paste(starter_txt, collapse = "\n")
+    }
+
+    active_ex_id(new_id)
+    update_code_input(session, "editor", drafts[[new_id]])
 
     output$ex_desc <- renderUI({
       div(
@@ -331,12 +337,11 @@ server <- function(input, output, session) {
     output$tbl_preview <- renderUI(tags$em("Run to preview output."))
   }, ignoreInit = FALSE)
 
-  # keep current editor content in draft for the current exercise
   observe({
-    req(input$ex_id)
-    key <- input$ex_id
-    code_now <- get_code_input(input, "editor")
-    drafts[[key]] <- code_now
+    key <- active_ex_id()
+    if (!is.null(key) && nzchar(key)) {
+      drafts[[key]] <- get_code_input(input, "editor")
+    }
   })
 
   output$exercise_meta <- renderUI({
@@ -354,23 +359,11 @@ server <- function(input, output, session) {
       }
     )
 
-    pfx <- docs_prefix()
-
     shell_table <- ex$shell_table %||% "Not specified"
     grading_mode <- ex$grading_mode %||% "table_text"
     helper_keys <- ex$helper_keys %||% character()
-
-    shell_doc <- resolve_shell_file(ex, up$docs_dir)
-
-    shell_link <- NULL
-    if (!is.null(pfx) && !is.null(shell_doc)) {
-      shell_href <- paste0("/", pfx, "/", utils::URLencode(shell_doc))
-      shell_link <- tags$a(
-        href = shell_href,
-        target = "_blank",
-        "Open shell / documentation"
-      )
-    }
+    doc_path <- shell_doc_path()
+    has_shell_doc <- !is.null(doc_path) && file.exists(doc_path)
 
     tagList(
       div(class = "meta-label", "Current user"),
@@ -382,12 +375,16 @@ server <- function(input, output, session) {
       div(class = "meta-label", "Save location"),
       div(class = "meta-value", up$save_dir),
 
+      div(class = "meta-label", "Documentation path"),
+      div(class = "meta-value", up$docs_dir),
+
       div(class = "meta-label", "Shell table"),
       div(class = "meta-value", shell_table),
 
-      if (!is.null(shell_link)) tagList(
-        div(class = "meta-label", "Documentation"),
-        div(class = "meta-value", shell_link)
+      if (has_shell_doc) tagList(
+        div(class = "meta-label", "Shell file"),
+        div(class = "meta-value", safe_basename(doc_path)),
+        downloadButton("download_shell_doc", "Open shell / documentation")
       ),
 
       div(class = "meta-label", "Grading mode"),
@@ -399,6 +396,25 @@ server <- function(input, output, session) {
       )
     )
   })
+
+  output$download_shell_doc <- downloadHandler(
+    filename = function() {
+      p <- shell_doc_path()
+      if (is.null(p) || !file.exists(p)) {
+        "shell_documentation.docx"
+      } else {
+        basename(p)
+      }
+    },
+    content = function(file) {
+      p <- shell_doc_path()
+      validate(
+        need(!is.null(p) && file.exists(p), "Shell documentation file not found.")
+      )
+      file.copy(p, file, overwrite = TRUE)
+    },
+    contentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  )
 
   output$helper_select_ui <- renderUI({
     filtered <- helper_filtered()
@@ -453,13 +469,12 @@ server <- function(input, output, session) {
     ex <- current_ex()
     up <- user_paths()
     code <- get_code_input(input, "editor")
-    prep_code <- read_optional_text(ex$prep_file)
 
     out <- tryCatch(
       run_user_code(
         code = code,
         training_ra_root = up$ra_root,
-        prep_code = prep_code,
+        prep_code = NULL,
         timeout_sec = ex$timeout_sec
       ),
       error = function(e) {
@@ -485,13 +500,12 @@ server <- function(input, output, session) {
     up <- user_paths()
     code <- get_code_input(input, "editor")
     grading_mode <- ex$grading_mode %||% "table_text"
-    prep_code <- read_optional_text(ex$prep_file)
 
     out <- tryCatch(
       run_user_code(
         code = code,
         training_ra_root = up$ra_root,
-        prep_code = prep_code,
+        prep_code = NULL,
         timeout_sec = ex$timeout_sec
       ),
       error = function(e) {
@@ -507,11 +521,13 @@ server <- function(input, output, session) {
       return()
     }
 
+    prep_code_ref <- read_optional_text(ex$prep_file)
+
     ref_out <- tryCatch(
       run_reference_code(
         reference_file = ex$reference_file,
         training_ra_root = up$ra_root,
-        prep_code = prep_code,
+        prep_code = prep_code_ref,
         timeout_sec = ex$timeout_sec
       ),
       error = function(e) {
