@@ -1,3 +1,50 @@
+
+slugify_name <- function(x) {
+  x <- tolower(x %||% "")
+  x <- gsub("[^a-z0-9]+", "_", x)
+  x <- gsub("^_+|_+$", "", x)
+  x
+}
+
+save_exercise_code <- function(save_dir, exercise_id, user_id, code) {
+  dir.create(save_dir, recursive = TRUE, showWarnings = FALSE)
+
+  ex_part <- slugify_name(exercise_id)
+  user_part <- slugify_name(user_id)
+
+  prefix <- paste0(ex_part, "_", user_part)
+
+  existing <- list.files(
+    save_dir,
+    pattern = paste0("^", prefix, "_submission[0-9]+\\.R$"),
+    full.names = FALSE
+  )
+
+  next_n <- 1L
+  if (length(existing) > 0) {
+    nums <- suppressWarnings(
+      as.integer(sub(paste0("^", prefix, "_submission([0-9]+)\\.R$"), "\\1", existing))
+    )
+    nums <- nums[!is.na(nums)]
+    if (length(nums) > 0) next_n <- max(nums) + 1L
+  }
+
+  out <- file.path(save_dir, paste0(prefix, "_submission", next_n, ".R"))
+  writeLines(code, out, useBytes = TRUE)
+
+  normalizePath(out, winslash = "/", mustWork = FALSE)
+}
+
+
+saved <- tryCatch(
+  save_exercise_code(
+    save_dir = up$save_dir,
+    exercise_id = ex$id,
+    user_id = up$user_id,
+    code = code
+  ),
+
+
 Environment
 • DaVinci
 	• Request access Requirements to get access to​ DaVinci​ (novartis.net)
