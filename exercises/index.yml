@@ -3,6 +3,6 @@ rtables:
     title: "Ex101 — Duration on study (14.1-2.3.f)"
     yml: "exercises/rtables/ex101_duration_on_study.yml"
 
-  - id: ex102_protocol_deviations
-    title: "Ex102 — Protocol deviations (14.1-3.1.f2)"
-    yml: "exercises/rtables/ex102_protocol_deviations.yml"
+  - id: ex102_teae_by_pt
+    title: "Ex102 — TEAEs by preferred term (14.3.1-2.3.f2)"
+    yml: "exercises/rtables/ex102_teae_by_pt.yml"
