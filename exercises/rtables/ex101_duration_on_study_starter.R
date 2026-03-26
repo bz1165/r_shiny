@@ -10,20 +10,8 @@ library(dplyr)
 library(rtables)
 
 
-# Complete the layout.
-# Requirements:
-# - split columns by ARM
-# - add overall column Total
-# - analyze DURSTDY using a_num_shell
-# - add top-left text: Duration on study (days)
-
-lyt <- basic_table(
-  show_colcounts = TRUE,
-  colcount_format = "N=xx"
-)
-
 # TODO
-
-tbl <- build_table(lyt, adsl_fas)
-
-tbl
+# 1) read the required dataset(s)
+# 2) prep data
+# 3) build the rtables layout
+# 4) return final table object as `tbl`
