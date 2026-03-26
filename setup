@@ -12,6 +12,16 @@
 #_____________________________________________________a__________________________
 
 
+
+.libPaths(c(
+  "/CHBS/apps/EB/software/R/4.3.1-gomkl-2022a-0.5/installed_pkg",
+  "/CHBS/apps/EB/software/R/4.3.1-gomkl-2022a-0.5/lib64/R/library",
+  .libPaths()
+))
+
+cat("App startup .libPaths():\n")
+print(.libPaths())
+cat("reporter available at app startup? ", requireNamespace("reporter", quietly = TRUE), "\n")
 # Load R packages --------------------------------------------
 cat(paste(c("The library dictionaries within which packages are looked for:", .libPaths(), "\n"), collapse = "\n"))
 
