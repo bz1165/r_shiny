@@ -1,0 +1,862 @@
+/****************************************************************
+*  PROJECT       : CLNP023A
+*  STUDY         : CLNP023A2301
+*  RA            : csr_7
+*  FILENAME      : t_mmrm_egfr.sas     
+*  DATE CREATED  : 28JUL2025
+*  AUTHOR        : YAOAI1
+
+*  DESCRIPTION   : Table 14.2-1.9.1Supplementary estimand 3 - Repeated measures (MMRM) analysis of the change from baseline in eGFR (mL/min/1.73m2) to 24 months – Main study population
+
+*  PLATFORM      : (see SAS log file)
+*  SAS VERSION   : (see SAS log file)
+
+*  MACROS CALLED : <type here>
+*  INPUT         : adsl,adfacit
+*  OUTPUT        : t142_1_9_01.rtf, t142_1_10_01.rtf
+
+*  MODIFICATIONS : [x.xx] dd-mmm-yy, 5-2-1 id, brief description
+* (see file management system for changes) 
+****************************************************************/
+
+
+data _null_;
+  if libref('analysis') then call execute('%nrstr(%autorun;)');
+run;
+
+/*%let sysparm = PTL2012_SP2_ -log 't_mmrm_upcr_pr.sas_PTL2012.log';*/
+proc format;
+  value $label
+  "LNP023 200 mg"="LNP023 200 mg bid"
+  "Placebo"="Placebo";
+run;
+
+%macro generatetfl(dat=,pop=,cat=,id=,report=);
+
+data ana1;
+  set analysis.&dat.;
+  where &pop.="Y" and acat1=&cat. and avisit ne "Baseline" /*and 1<=impnum<=10*/;
+run;
+
+
+proc sort data=ana1; by impnum trt01pn; run;
+
+ods output LSMeans=lsm diffs=diff covparms=covp convergencestatus=convtest;
+proc mixed data=ana1 METHOD=REML order=internal;
+  by impnum;
+  class trt01pn (ref="2") avisitn subjid strval1 strval2 strval3;
+  model chg = trt01pn avisitn strval1 strval2 strval3 base trt01pn*avisitn avisitn*base/fullx ddfm=kr;  
+  repeated avisitn/subject=subjid type=un;
+  lsmeans trt01pn*avisitn/cl COV diff E OM at means alpha=0.05;
+run;
+
+/*results 1: Difference between treatment goup*/
+
+proc sort data=diff; 
+  by trt01pn avisitn _trt01pn _avisitn; 
+/*  where trt01pn ne _trt01pn and avisitn=_avisitn;*/
+run;
+ods output ParameterEstimates = diff_mi /*(keep = trt01pn avisitn estimate stderr lclmean uclmean probt)*/;
+proc mianalyze data=diff;
+	by trt01pn avisitn _trt01pn _avisitn;
+	ModelEffects ESTIMATE;
+	stderr stderr;
+run;
+data diff_mi2;
+  set diff_mi (rename = (probt = probt_));
+  if estimate > 0 then probt = probt_/2;
+  else if estimate < 0 then probt = 1-probt_/2;
+run;
+
+/*results 2: Mean effect for each treatment goup*/
+proc sort data=lsm; 
+  by avisitn trt01pn; 
+/*  where trt01pn ne _trt01pn and avisitn=_avisitn;*/
+run;
+ods output ParameterEstimates = lsm_mi /*(keep = trt01pn avisitn estimate stderr lclmean uclmean probt)*/;
+proc mianalyze data=lsm;
+	by avisitn trt01pn;
+	ModelEffects ESTIMATE;
+	stderr stderr;
+run;
+
+/*Calculation of geometric means*/
+data lsm2;
+set lsm_mi;
+length chg_m $100.;
+chg_m=strip(put(round(Estimate,0.001),10.3)) || " (" || strip(put(round(LCLMean,0.001),10.3)) || ", " || strip(put(round(UCLMean,0.001),10.3)) || ")";
+keep avisitn trt01pn chg_m Estimate LCLMean UCLMean;
+run;
+/*Calculation of geometric mean ratio to placebo*/
+data diff2;
+set diff_mi2;
+length chg_m_diff pval $100.;
+where avisitn=_avisitn;
+chg_m_diff=strip(put(round(Estimate,0.001),10.3)) || " (" || strip(put(round(LCLMean,0.001),10.3)) || ", " || strip(put(round(UCLMean,0.001),10.3)) || ")";
+/*reduce=strip(put(1-geo_est_ratio,10.3)) || " (" || strip(put(1-geo_lower_ratio,10.3)) || ", " || strip(put(1-geo_upper_ratio,10.3)) || ")";*/
+/*reduce=strip(put(100-geo_est_ratio*100,10.3)) || " (" || strip(put(100-geo_upper_ratio*100,10.3)) || ", " || strip(put(100-geo_lower_ratio*100,10.3)) || ")";*/
+if . < PROBT <= 0.0001 then pval = "<.0001";
+else if . < PROBT => 0.9999 then pval = ">0.9999";
+else pval = strip(put(round(PROBT,0.0001),10.4));
+pvalN=PROBT;
+Estimate_diff=Estimate;
+LCLMean_diff=LCLMean;
+UCLMean_diff=UCLMean;
+keep avisitn trt01pn chg_m_diff pval pvaln Estimate_diff LCLMean_diff UCLMean_diff;
+run;
+
+
+proc sql noprint;
+  create table count as
+  select count(distinct usubjid) as bigN, trt01pn, trt01p
+  from ana1
+  group by trt01pn, trt01p;
+  create table count2 as
+  select count(distinct usubjid) as nobs, avisitn, avisit, trt01pn, trt01p
+  from ana1
+  where dtype in ("" "TP")
+  group by avisitn, avisit, trt01pn, trt01p;
+quit;
+
+data final;
+length label $100.;
+  merge count2 lsm2 diff2;
+  by avisitn trt01pn;
+/*  if avisitn<=206;*/
+/*  label=put(trt01p,$label.);*/
+  label=trt01p;
+  if avisitn ne 211 then call missing (pval);
+run;
+proc sql noprint;
+  create table final2 as
+  select a.*, bigN
+  from final a left join count b on
+  a.trt01pn=b.trt01pn
+  order by avisitn, avisit, trt01pn, trt01p;
+quit;
+
+data rprteff.anstat_&id;
+	set final2;
+
+	if pval eq "" then pvaln=.;
+run;
+
+/********************************************************************
+   Output display
+********************************************************************/
+  %let _std_indset           = final2;
+ 
+/* Define List of variables in Column Statement */
+  %let _std_column           = avisit label bigN nobs chg_m ("LNP023 200mg b.i.d. vs Placebo" chg_m_diff pval);
+  %let _std_defaultdset       = analysis.defaults;
+
+/* Pseudodefine */
+   %let avisit             = 11 ~ l ~l~ "Time point";
+   %let label             = 20 ~ l ~l~ "Treatment";
+   %let bigN               = 5 ~ c ~c~ "N";
+   %let nobs                  = 5 ~ c ~c~ "n";
+   %let chg_m              = 28 ~ c ~c~ "Adjusted mean@%sysfunc(repeat(%sysfunc(byte(160)),2))(95% CI)";
+   %let chg_m_diff        = 28 ~ c ~c~ "Adjusted mean difference@%sysfunc(repeat(%sysfunc(byte(160)),2))(95% CI)";
+   %let pval               = 7 ~ c ~c~ "1-sided@p-value";
+
+/********************************************************************
+   Sorting, Page break and report settings
+********************************************************************/
+   %let _STD_SORT_column        = avisitn trt01pn;
+/*   %let _std_colwidth           = 12;*/
+   %let _std_skip               = ;
+   %let _std_norepeat           = ;
+   %let _std_pagebreak		= ;								
+   %let _std_norepeat     = avisit;
+
+/********************************************************************
+   Output file management
+********************************************************************/
+
+/* ODS output type */
+%Let _std_indtflow=0;
+%let _std_output_post_in             = WCB;
+%let _std_wcb_no_lines_page          = 24;
+%let _std_desc_output_type           = Table;
+%let _std_orientation                = LANDSCAPE;
+
+%let _std_ods_type=RTF;
+%let _std_ods_out = %sysfunc(pathname(RPRTEFF))/&report..rtf;
+/*%let _std_saveout = REPORT;*/
+%let _std_rtf_output = %sysfunc(pathname(RPRTEFF))/&report..rtf;
+/** Add end   ************************************************************;*/
+/*%let _std_saveout = rprtdra.anstat_PTL0171;*/
+
+*--------------------------------*;
+*-- Section 3:  Produce Output --*;
+*--------------------------------*;
+%_std_readparam(deliv_id=&id, csvfilepath= %sysfunc(pathname(RAUTIL))/TrakData.csv);
+
+%std_onc_dev_listing;
+
+%symdel _std_output_number;
+%mend;
+
+%generatetfl(dat=adgfrmi2,pop=MAINPFL, cat="Sensitivity 0.6/Supplementary 3",id=PTL0187,report=t142_1_9_01);
+%generatetfl(dat=adgfrmi3,pop=MAINPFL, cat="Supplementary 4",id=PTL0188,report=t142_1_10_01);
+
+
+/****************************************************************
+*  PROJECT       : CLNP023A
+*  STUDY         : CLNP023A2301
+*  RA            : csr_7
+*  FILENAME      : t_mmrm_facit.sas     
+*  DATE CREATED  : 07-Mar-2023
+*  AUTHOR        : Evans Ochiaga (ochiaev2)
+
+*  DESCRIPTION   : Table 14.2-4.1 Secondary estimand 4 - Repeated measures (MMRM) analysis of the change from baseline in FACIT-Fatigue total score to 9 months   
+                   Table 14.2-4.2 Supplementary estimand 4.1 based on treatment policy strategy - Repeated measures (MMRM) analysis of the change from|baseline in FACIT-Fatigue total score to 9 months
+                   Table 14.2-4.1.1	Repeated measures (MMRM) analysis of the change from baseline in FACIT-Fatigue total score to 24 months
+
+*  PLATFORM      : (see SAS log file)
+*  SAS VERSION   : (see SAS log file)
+
+*  MACROS CALLED : <type here>
+*  INPUT         : adsl,adfacit
+*  OUTPUT        : t142_4_01.rtf, t142_4_02.rtf, t1424_1_01.rtf
+
+*  MODIFICATIONS : [x.xx] dd-mmm-yy, 5-2-1 id, brief description
+* (see file management system for changes) 
+****************************************************************/
+%autorun;
+
+proc datasets lib=work kill;
+run;
+
+/*%let sysparm = PTL2012_SP2_ -log 't_mmrm_upcr_pr.sas_PTL2012.log';*/
+proc format;
+  value $label
+  "LNP023 200 mg"="LNP023 200 mg bid"
+  "Placebo"="Placebo";
+run;
+
+%macro generatetfl(pop=,cat=,id=,report=);
+data ana1;
+  set analysis.adfacmi;
+  where &pop.="Y" and acat1=&cat.;
+run;
+
+proc sort data=ana1; by impnum trt01pn; run;
+
+ods output LSMeans=lsm diffs=diff covparms=covp convergencestatus=convtest;
+proc mixed data=ana1 METHOD=REML order=internal;
+  by impnum;
+  class trt01pn (ref="2") avisitn subjid strval1 strval2 strval3;
+  model chg = trt01pn avisitn strval1 strval2 strval3 base trt01pn*avisitn avisitn*base/fullx ddfm=kr;  
+  repeated avisitn/subject=subjid type=un;
+  lsmeans trt01pn*avisitn/cl COV diff E OM at means alpha=0.05;
+run;
+
+
+/*results 1: Difference between treatment goup*/
+
+proc sort data=diff; 
+  by trt01pn avisitn _trt01pn _avisitn; 
+/*  where trt01pn ne _trt01pn and avisitn=_avisitn;*/
+run;
+ods output ParameterEstimates = diff_mi /*(keep = trt01pn avisitn estimate stderr lclmean uclmean probt)*/;
+proc mianalyze data=diff;
+	by trt01pn avisitn _trt01pn _avisitn;
+	ModelEffects ESTIMATE;
+	stderr stderr;
+run;
+data diff_mi2;
+  set diff_mi (rename = (probt = probt_));
+  if estimate > 0 then probt = probt_/2;
+  else if estimate < 0 then probt = 1-probt_/2;
+run;
+
+/*results 2: Mean effect for each treatment goup*/
+proc sort data=lsm; 
+  by avisitn trt01pn; 
+/*  where trt01pn ne _trt01pn and avisitn=_avisitn;*/
+run;
+ods output ParameterEstimates = lsm_mi /*(keep = trt01pn avisitn estimate stderr lclmean uclmean probt)*/;
+proc mianalyze data=lsm;
+	by avisitn trt01pn;
+	ModelEffects ESTIMATE;
+	stderr stderr;
+run;
+
+/*Calculation of geometric means*/
+data lsm2;
+set lsm_mi;
+length chg_m $100.;
+chg_m=strip(put(round(Estimate,0.001),10.3)) || " (" || strip(put(round(LCLMean,0.001),10.3)) || ", " || strip(put(round(UCLMean,0.001),10.3)) || ")";
+keep avisitn trt01pn chg_m;
+run;
+/*Calculation of geometric mean ratio to placebo*/
+data diff2;
+set diff_mi2;
+length chg_m_diff pval $100.;
+where avisitn=_avisitn;
+chg_m_diff=strip(put(round(Estimate,0.001),10.3)) || " (" || strip(put(round(LCLMean,0.001),10.3)) || ", " || strip(put(round(UCLMean,0.001),10.3)) || ")";
+/*reduce=strip(put(1-geo_est_ratio,10.3)) || " (" || strip(put(1-geo_lower_ratio,10.3)) || ", " || strip(put(1-geo_upper_ratio,10.3)) || ")";*/
+/*reduce=strip(put(100-geo_est_ratio*100,10.3)) || " (" || strip(put(100-geo_upper_ratio*100,10.3)) || ", " || strip(put(100-geo_lower_ratio*100,10.3)) || ")";*/
+if . < PROBT =< 0.0001 then pval = "<0.0001";
+else if . < PROBT => 0.9999 then pval = ">0.9999";
+else pval = strip(put(round(PROBT,0.0001),10.4));
+pvalN=PROBT;
+keep avisitn trt01pn chg_m_diff pval pvaln;
+run;
+
+proc sql noprint;
+  create table count as
+  select count(distinct usubjid) as bigN, trt01pn, trt01p
+  from ana1
+  group by trt01pn, trt01p;
+  create table count2 as
+  select count(distinct usubjid) as nobs, avisitn, avisit, trt01pn, trt01p
+  from ana1
+  where dtype in ('', 'TP')
+  group by avisitn, avisit, trt01pn, trt01p;
+quit;
+
+
+data final;
+length label $100.;
+  merge count2 lsm2 diff2;
+  by avisitn trt01pn;
+
+   
+     label=trt01p;
+
+      if avisitn ne 206 then call missing (pval);
+  
+ run;
+
+
+ proc sql noprint;
+  create table final2 as
+  select a.*, bigN
+  from final a left join count b on
+  a.trt01pn=b.trt01pn
+  order by avisitn, avisit, trt01pn, trt01p;
+quit;
+
+data rprteff.anstat_&id;
+	set final2;
+
+	if pval eq "" then pvaln=.;
+run;
+
+
+/********************************************************************
+   Output display
+********************************************************************/
+  %let _std_indset           = final2;
+ 
+/* Define List of variables in Column Statement */
+  %let _std_column           = avisit label bigN nobs chg_m ("LNP023 200mg b.i.d. vs Placebo" chg_m_diff pval);
+  %LET _std_defaultdset       =  analysis.defaults;
+  %LET _std_popsubdef         =  analysis.popsubdef;
+  %LET _std_aggregdset        =  analysis.aggdset;
+  %LET _std_statfiledef       =  analysis.statfile;
+/* Pseudodefine */
+   %let avisit             = 10 ~ l ~l~ "Time point";
+   %let label             = 20 ~ l ~l~ "Treatment";
+   %let bigN               = 6 ~ c ~c~ "N";
+   %let nobs                  = 6 ~ c ~c~ "n";
+   %let chg_m              = 30 ~ c ~c~ "Adjusted mean@%sysfunc(repeat(%sysfunc(byte(160)),2))(95% CI)";
+   %let chg_m_diff        = 30 ~ c ~c~ "Adjusted mean difference@%sysfunc(repeat(%sysfunc(byte(160)),2))(95% CI)";
+   %let pval               = 8 ~ c ~c~ "1-sided@p-value";
+
+/********************************************************************
+   Sorting, Page break and report settings
+********************************************************************/
+   %let _STD_SORT_column        = avisitn trt01pn;
+/*   %let _std_colwidth           = 12;*/
+   %let _std_skip               = ;
+   %let _std_norepeat           = ;
+   %let _std_pagebreak		= ;								
+   %let _std_norepeat     = avisit;
+
+/********************************************************************
+   Output file management
+********************************************************************/
+
+/* ODS output type */
+%Let _std_indtflow=0;
+%let _std_output_post_in             = WCB;
+%let _std_wcb_no_lines_page          = 24;
+%let _std_desc_output_type           = Table;
+%let _std_orientation                = LANDSCAPE;
+
+%let _std_ods_type=RTF;
+%let _std_ods_out = %sysfunc(pathname(RPRTEFF))/&report..rtf;
+/*%let _std_saveout = REPORT;*/
+%let _std_rtf_output = %sysfunc(pathname(RPRTEFF))/&report..rtf;
+/** Add end   ************************************************************;*/
+/*%let _std_saveout = rprtdra.anstat_PTL0171;*/
+
+*--------------------------------*;
+*-- Section 3:  Produce Output --*;
+*--------------------------------*;
+%_std_readparam(deliv_id=&id, csvfilepath= %sysfunc(pathname(RAUTIL))/TrakData.csv);
+
+%std_onc_dev_listing;
+
+%symdel _std_output_number;
+
+%mend ;
+
+%generatetfl(pop=FASFL, cat="Secondary estimand 4/Exploratory estimand",id=PTL0035,report=t142_4_01);
+%generatetfl(pop=FASFL, cat="Supplementary estimand 4.1",id=PTL0036,report=t142_4_02);
+*%generatetfl(pop=FASFL, cat="Secondary estimand 4/Exploratory estimand",id=PTL0163,report=t142_4_1_01);
+/****************************************************************
+*  PROJECT       : CLNP023A
+*  STUDY         : CLNP023A2301
+*  RA            : csr_7
+*  FILENAME      : t_mmrm_facit.sas     
+*  DATE CREATED  : 07-Mar-2023
+*  AUTHOR        : Evans Ochiaga (ochiaev2)
+
+*  DESCRIPTION   : Table 14.2-4.1 Secondary estimand 4 - Repeated measures (MMRM) analysis of the change from baseline in FACIT-Fatigue total score to 9 months   
+                   Table 14.2-4.2 Supplementary estimand 4.1 based on treatment policy strategy - Repeated measures (MMRM) analysis of the change from|baseline in FACIT-Fatigue total score to 9 months
+                   Table 14.2-4.1.1	Repeated measures (MMRM) analysis of the change from baseline in FACIT-Fatigue total score to 24 months
+
+*  PLATFORM      : (see SAS log file)
+*  SAS VERSION   : (see SAS log file)
+
+*  MACROS CALLED : <type here>
+*  INPUT         : adsl,adfacit
+*  OUTPUT        : t142_4_01.rtf, t142_4_02.rtf, t1424_1_01.rtf
+
+*  MODIFICATIONS : [x.xx] dd-mmm-yy, 5-2-1 id, brief description
+* (see file management system for changes) 
+****************************************************************/
+%autorun;
+
+proc datasets lib=work kill;
+run;
+
+/*%let sysparm = PTL2012_SP2_ -log 't_mmrm_upcr_pr.sas_PTL2012.log';*/
+proc format;
+  value $label
+  "LNP023 200 mg"="LNP023 200 mg bid"
+  "Placebo"="Placebo";
+run;
+
+%macro generatetfl(pop=,cat=,id=,report=);
+data ana1;
+  set analysis.adfacmi;
+  where &pop.="Y" and acat1=&cat.;
+run;
+
+proc sort data=ana1; by impnum trt01pn; run;
+
+ods output LSMeans=lsm diffs=diff covparms=covp convergencestatus=convtest;
+proc mixed data=ana1 METHOD=REML order=internal;
+  by impnum;
+  class trt01pn (ref="2") avisitn subjid strval1 strval2 strval3;
+  model chg = trt01pn avisitn strval1 strval2 strval3 base trt01pn*avisitn avisitn*base/fullx ddfm=kr;  
+  repeated avisitn/subject=subjid type=un;
+  lsmeans trt01pn*avisitn/cl COV diff E OM at means alpha=0.05;
+run;
+
+
+/*results 1: Difference between treatment goup*/
+
+proc sort data=diff; 
+  by trt01pn avisitn _trt01pn _avisitn; 
+/*  where trt01pn ne _trt01pn and avisitn=_avisitn;*/
+run;
+ods output ParameterEstimates = diff_mi /*(keep = trt01pn avisitn estimate stderr lclmean uclmean probt)*/;
+proc mianalyze data=diff;
+	by trt01pn avisitn _trt01pn _avisitn;
+	ModelEffects ESTIMATE;
+	stderr stderr;
+run;
+data diff_mi2;
+  set diff_mi (rename = (probt = probt_));
+  if estimate > 0 then probt = probt_/2;
+  else if estimate < 0 then probt = 1-probt_/2;
+run;
+
+/*results 2: Mean effect for each treatment goup*/
+proc sort data=lsm; 
+  by avisitn trt01pn; 
+/*  where trt01pn ne _trt01pn and avisitn=_avisitn;*/
+run;
+ods output ParameterEstimates = lsm_mi /*(keep = trt01pn avisitn estimate stderr lclmean uclmean probt)*/;
+proc mianalyze data=lsm;
+	by avisitn trt01pn;
+	ModelEffects ESTIMATE;
+	stderr stderr;
+run;
+
+/*Calculation of geometric means*/
+data lsm2;
+set lsm_mi;
+length chg_m $100.;
+chg_m=strip(put(round(Estimate,0.001),10.3)) || " (" || strip(put(round(LCLMean,0.001),10.3)) || ", " || strip(put(round(UCLMean,0.001),10.3)) || ")";
+keep avisitn trt01pn chg_m;
+run;
+/*Calculation of geometric mean ratio to placebo*/
+data diff2;
+set diff_mi2;
+length chg_m_diff pval $100.;
+where avisitn=_avisitn;
+chg_m_diff=strip(put(round(Estimate,0.001),10.3)) || " (" || strip(put(round(LCLMean,0.001),10.3)) || ", " || strip(put(round(UCLMean,0.001),10.3)) || ")";
+/*reduce=strip(put(1-geo_est_ratio,10.3)) || " (" || strip(put(1-geo_lower_ratio,10.3)) || ", " || strip(put(1-geo_upper_ratio,10.3)) || ")";*/
+/*reduce=strip(put(100-geo_est_ratio*100,10.3)) || " (" || strip(put(100-geo_upper_ratio*100,10.3)) || ", " || strip(put(100-geo_lower_ratio*100,10.3)) || ")";*/
+if . < PROBT =< 0.0001 then pval = "<0.0001";
+else if . < PROBT => 0.9999 then pval = ">0.9999";
+else pval = strip(put(round(PROBT,0.0001),10.4));
+pvalN=PROBT;
+keep avisitn trt01pn chg_m_diff pval pvaln;
+run;
+
+proc sql noprint;
+  create table count as
+  select count(distinct usubjid) as bigN, trt01pn, trt01p
+  from ana1
+  group by trt01pn, trt01p;
+  create table count2 as
+  select count(distinct usubjid) as nobs, avisitn, avisit, trt01pn, trt01p
+  from ana1
+  where dtype in ('', 'TP')
+  group by avisitn, avisit, trt01pn, trt01p;
+quit;
+
+
+data final;
+length label $100.;
+  merge count2 lsm2 diff2;
+  by avisitn trt01pn;
+
+   
+     label=trt01p;
+
+      if avisitn ne 206 then call missing (pval);
+  
+ run;
+
+
+ proc sql noprint;
+  create table final2 as
+  select a.*, bigN
+  from final a left join count b on
+  a.trt01pn=b.trt01pn
+  order by avisitn, avisit, trt01pn, trt01p;
+quit;
+
+data rprteff.anstat_&id;
+	set final2;
+
+	if pval eq "" then pvaln=.;
+run;
+
+
+/********************************************************************
+   Output display
+********************************************************************/
+  %let _std_indset           = final2;
+ 
+/* Define List of variables in Column Statement */
+  %let _std_column           = avisit label bigN nobs chg_m ("LNP023 200mg b.i.d. vs Placebo" chg_m_diff pval);
+  %LET _std_defaultdset       =  analysis.defaults;
+  %LET _std_popsubdef         =  analysis.popsubdef;
+  %LET _std_aggregdset        =  analysis.aggdset;
+  %LET _std_statfiledef       =  analysis.statfile;
+/* Pseudodefine */
+   %let avisit             = 10 ~ l ~l~ "Time point";
+   %let label             = 20 ~ l ~l~ "Treatment";
+   %let bigN               = 6 ~ c ~c~ "N";
+   %let nobs                  = 6 ~ c ~c~ "n";
+   %let chg_m              = 30 ~ c ~c~ "Adjusted mean@%sysfunc(repeat(%sysfunc(byte(160)),2))(95% CI)";
+   %let chg_m_diff        = 30 ~ c ~c~ "Adjusted mean difference@%sysfunc(repeat(%sysfunc(byte(160)),2))(95% CI)";
+   %let pval               = 8 ~ c ~c~ "1-sided@p-value";
+
+/********************************************************************
+   Sorting, Page break and report settings
+********************************************************************/
+   %let _STD_SORT_column        = avisitn trt01pn;
+/*   %let _std_colwidth           = 12;*/
+   %let _std_skip               = ;
+   %let _std_norepeat           = ;
+   %let _std_pagebreak		= ;								
+   %let _std_norepeat     = avisit;
+
+/********************************************************************
+   Output file management
+********************************************************************/
+
+/* ODS output type */
+%Let _std_indtflow=0;
+%let _std_output_post_in             = WCB;
+%let _std_wcb_no_lines_page          = 24;
+%let _std_desc_output_type           = Table;
+%let _std_orientation                = LANDSCAPE;
+
+%let _std_ods_type=RTF;
+%let _std_ods_out = %sysfunc(pathname(RPRTEFF))/&report..rtf;
+/*%let _std_saveout = REPORT;*/
+%let _std_rtf_output = %sysfunc(pathname(RPRTEFF))/&report..rtf;
+/** Add end   ************************************************************;*/
+/*%let _std_saveout = rprtdra.anstat_PTL0171;*/
+
+*--------------------------------*;
+*-- Section 3:  Produce Output --*;
+*--------------------------------*;
+%_std_readparam(deliv_id=&id, csvfilepath= %sysfunc(pathname(RAUTIL))/TrakData.csv);
+
+%std_onc_dev_listing;
+
+%symdel _std_output_number;
+
+%mend ;
+
+%generatetfl(pop=FASFL, cat="Secondary estimand 4/Exploratory estimand",id=PTL0035,report=t142_4_01);
+%generatetfl(pop=FASFL, cat="Supplementary estimand 4.1",id=PTL0036,report=t142_4_02);
+*%generatetfl(pop=FASFL, cat="Secondary estimand 4/Exploratory estimand",id=PTL0163,report=t142_4_1_01);
+
+
+
+/**********************************************************************************************************************************
+** FILENAME      : t_slope_egfr_pe.sas                                                                                           
+** DEVELOPER     : Huihong Zhu(zhuhuj)                                                                                          
+** DATE          : 13MAR2023                                                                                                    
+** PLATFORM      : SAS 9.4 on AIX 64                                                                                            
+** DRUG/PROTOCOL : CLNP023A/CLNP023A2301                                                                                        
+** DESCRIPTION   : Table 14.2-5.1/Table 14.2-5.1.1                                                                                                             
+**                                                                                                                              
+** MACROS USED   :                                                                                                              
+** INPUT         : analysis.adgfrsmi, analysis.adsl                                                                              
+** OUTPUT        :                                                                                                              
+** ASSUMPTIONS   :                                                                                                              
+** MODIFICATION HISTORY:                                                                                                        
+*  MODIFICATIONS : YAOAI1   Copied from csr_2   12MAR2025
+***********************************************************************************************************************************/
+
+
+
+data _null_;
+  if libref('analysis') then call execute('%nrstr(%autorun;)');
+run;
+
+%let sysparm = PTL0013_PE_;
+
+%let pgmname=t_slope_egfr_pe;
+/*%let delivid = %sysfunc(compress(%scan(%upcase(&sysparm),1,"_")));*/
+/*%let estimand = %scan(%upcase(&sysparm),2,"_");*/
+%let delivid = %sysfunc(compress(%scan(%upcase(&sysparm),1,"_")));
+%let estimand = %scan(%upcase(&sysparm),2,"_");
+
+%LET _std_ods_type                   = none;
+%global _title;
+
+%_std_readparam(deliv_id= &delivid., csvfilepath= &trakdata_csv.);
+
+
+data _NULL_;
+    length out_where $999 ;
+    out_where = "FASFL='Y' and MAINPFL='Y'";
+    if "&estimand."="PE" then do;
+      out_where = catx(" and ", out_where, "acat1='Primary estimand'");
+	end;
+      else if "&estimand."="SE1" then do; 
+        out_where = catx(" and ", out_where, "acat1='Supplementary estimand 1'");
+	  end;
+      else if "&estimand."="SP31" then do; 
+        out_where = catx(" and ", out_where, "acat1 ne 'Secondary estimand 3'");
+	  end;
+	if "&estimand."="SE1" then do;
+	  inadam="analysis.adgfsmi8";
+	end;
+	else do;
+	  inadam="analysis.adgfsmi1";
+	end;
+    call symputx("sys_where", out_where);
+    call symputx("inadam", inadam);
+run;
+
+proc format;
+  invalue planady
+  "Baseline"=1
+  "Week 2"=14
+  "Month 1"=28
+  "Month 3"=90
+  "Month 6"=180
+  "Month 9"=270
+  "Month 12"=360
+  "Month 15"=450
+  "Month 18"=540
+  "Month 21"=630
+  "Month 24"=720;
+  ;
+run;
+
+%put &inadam. &sys_where.;
+data ana1;
+  set &inadam.(where=(&sys_where.));
+  if avisitn=. then avisitn=visitnum;
+  if ady=. then planady=input(avisit,planady.)/365.25;
+    else planady=ady/365.25;
+run;
+
+proc sort data=ana1; by impnum subjid trt01pn planady; run;
+
+ods output ConvergenceStatus=convtest;
+proc mixed data=ana1;
+  by impnum;
+  class subjid trt01pn (ref="2") strval1 strval2 strval3;
+  model aval = trt01pn planady trt01pn*planady strval1 strval2 strval3/ddfm=kr;  
+  random intercept planady / subject=subjid type=un;
+estimate "eGFR slope difference (year)"     trt01pn*planady 1 -1 / cl e;
+estimate  "Active eGFR slope (year)"  planady 1 trt01pn*planady 1  0 / cl e;
+estimate  "Placebo eGFR slope (year)" planady 1 trt01pn*planady 0  1 / cl e;
+run;
+
+proc sql noprint;
+  select count(*) into: status from convtest 
+  where status=1;
+quit;
+%put &status;
+
+%macro slope;
+%if &status=0 %then %do;
+ods output estimates=est_j2rd;
+proc mixed data=ana1;
+  by impnum;
+  class subjid trt01pn (ref="2") strval1 strval2 strval3;
+  model aval = trt01pn planady trt01pn*planady strval1 strval2 strval3/ddfm=kr;  
+  random intercept planady / subject=subjid type=un;
+estimate "eGFR slope difference (year)"     trt01pn*planady 1 -1 / cl e;
+estimate  "LNP023 200mg b.i.d."  planady 1 trt01pn*planady 1  0 / cl e;
+estimate  "Placebo" planady 1 trt01pn*planady 0  1 / cl e;
+run;
+%end;
+%else %do;
+ods trace on;
+ods output estimates=est_j2rd;
+proc mixed data=ana1;
+  by impnum;
+  class subjid trt01pn (ref="2");
+  model aval = trt01pn planady trt01pn*planady/ddfm=kr;  
+  random intercept planady / subject=subjid type=un;
+estimate "eGFR slope difference (year)"     trt01pn*planady 1 -1 / cl e;
+estimate  "LNP023 200mg b.i.d."  planady 1 trt01pn*planady 1  0 / cl e;
+estimate  "Placebo" planady 1 trt01pn*planady 0  1 / cl e;
+run;
+ods trace off;
+%end;
+%mend;
+%slope;
+
+proc sort data=est_j2rd out=miest_j2rd;
+by Label; /*label assigned above */
+run;
+
+proc mianalyze data=miest_j2rd; 
+ods output ParameterEstimates=combined_estimates_j2rd;
+modeleffects  Estimate;
+stderr StdErr;
+by Label;
+run;
+
+
+
+data lsm1(drop=lsmdiff pval) lsm2(drop=label lsm);
+set combined_estimates_j2rd(rename = (probt = probt_));
+length lsm lsmdiff pval $100.;
+if label="eGFR slope difference (year)" then do; 
+  lsmdiff=strip(put(round(estimate,0.001),10.3)) || " (" || strip(put(round(LCLMean,0.001),10.3)) || ", " || strip(put(round(UCLMean,0.001),10.3)) || ")"; 
+  if estimate > 0 then probt = probt_/2;
+  else if estimate < 0 then probt = 1-probt_/2;
+  if . < PROBT =< 0.0001 then pval = "<0.0001";
+  else if . < PROBT => 0.9999 then pval = ">0.9999";
+  else pval = strip(put(round(probt,0.0001),best.));
+end;
+  else lsm=strip(put(round(estimate,0.001),10.3)) || " (" || strip(put(round(StdErr,0.001),10.3)) || ")";
+  if label ne "eGFR slope difference (year)" then output lsm1;
+  else output lsm2;
+keep label lsm lsmdiff pval estimate stderr lclmean uclmean probt;
+run;
+proc sql noprint;
+  create table lsm3 as
+  select a.label, a.lsm, a.estimate, a.stderr, a.lclmean, a.uclmean, b.lsmdiff, b.pval,b.probt as pvaln
+  from lsm1 a, lsm2 b;
+quit;
+
+
+proc sql noprint;
+  create table count as
+  select count(distinct usubjid) as bigN, trt01pn, trt01p
+  from ana1
+  group by trt01pn, trt01p;
+/*  create table count2 as*/
+/*  select count(distinct usubjid) as n, avisitn, trt01pn*/
+/*  from ana1*/
+/*  where dtype=""*/
+/*  group by avisitn, trt01pn;*/
+  create table final as
+  select a.*, b.*
+  from lsm3 a left join count b
+  on a.label=b.trt01p
+  order by trt01pn;
+quit;
+
+data final2;
+  set final;
+  if trt01pn=2 then call missing(lsmdiff,pval,pvaln);
+run;
+
+
+/********************************************************************
+   Output display
+********************************************************************/
+  %let _std_indset           = final2;
+ 
+/* Define List of variables in Column Statement */
+  %let _std_column           = trt01p bigN lsm ("LNP023 200mg b.i.d. vs Placebo" lsmdiff pval);
+  %let _std_defaultdset      = analysis.defaults;
+
+/* Pseudodefine */
+   %let trt01p             = 25 ~ l ~l~ "Treatment";
+   %let bigN               = 6 ~ c ~c~ "N";
+/*   %let n                  = 6 ~ c ~l~ "n";*/
+   %let lsm              = 22 ~ c ~c~ "LSM of slope (SE)";
+   %let lsmdiff        = 22 ~ c ~c~ "LSM of difference (95% CI)";
+   %let pval               = 8 ~ c ~c~ "1-sided@p-value";
+
+/********************************************************************
+   Sorting, Page break and report settings
+********************************************************************/
+   %let _STD_SORT_column        =trt01pn;
+/*   %let _std_colwidth           = 12;*/
+   %let _std_skip               = ;
+   %let _std_norepeat           = ;
+   %let _std_pagebreak		= ;								
+/*   %let _std_norepeat     = avisit;*/
+
+/********************************************************************
+   Output file management
+********************************************************************/
+
+/* ODS output type */
+%Let _std_indtflow=0;
+%let _std_output_post_in             = WCB;
+%let _std_wcb_no_lines_page          = 24;
+%let _std_desc_output_type           = Table;
+%let _std_orientation                = LANDSCAPE;
+%let _std_referenc                   = &referenc.;
+%let _std_saveout                    = rprteff.anstat_&delivid.;
+
+%std_onc_dev_listing;
+
+
+pdt
+Programming Deliverables Tracker (PDT): CLNP023A - CLNP023A2301 - csr_7																																										
+ID Information				Titles/Footnotes			Programming  Information								Output and GPS Information								Validation Information					Review Information				GMF information (must be filled in to use the MAKEFILE)									PDT Status	
+Category	Unique ID	Output Type	Output Reference	Title	Population	Footnotes	Priority	Program Folder	Program Name	Program/Output Logs	Program Type	Developers	Validated By	StatsQC	Programming And Output Status	GPS Program Label	Program Dependencies	Date Programmed	Output Folder	Output File Name	Output Check-in Date 	Execution Date	Validation	Validation Program Name	Validation Program Status	Template Name	Temporary Validation Status	CREDI Date	Date of Comment	Comment Owner	Comment	Version	Sysparm	Run Sequence	GMF Begin & End Loops	GMF Group_Status	GMF Alias	GMF Root Source Folder	GMF Root Target Folder	GMF Target	Import Load status	GPS Load Status
+CATEG	IDKEY	POTYPE	IREF	IDTITLE	IDPOP	IDFOOT	PPRIOR	PFOLDER	PNAME	OPTLOG	OPTTYPE	PDEV	PREVIEW	USER1	PSTATUS	OPTLABEL	PDEPEND	PDATE	POFOLDER	PONAME	POCHKD	POEXECD	PVALID	PQCNAME	OPTQCVAL	PTEMPLAT	OPTVALID	RCREDI	RDATE	RSTAT	RCOMM	GSOFT	GSYS	GRUN	GLOOP	GSTATUS	GGROUP	OPTROOTS	OPTROOTT	GTARGET	LSTATUS	LGPS
+FREE	TOOL	BOTH	TOOL	BOTH	LIST	BOTH	BOTH	BOTH	BOTH	TOOL	FREE	LIST	LIST	USER	TOOL	TOOL	TOOL	TOOL	BOTH	FREE	TOOL	TOOL	LIST	BOTH	TOOL	FREE	LIST	TOOL	TOOL	TOOL	FREE	FREE	FREE	BOTH	FREE	FREE	TOOL	FREE	FREE	FREE	TOOL	TOOL
+EFF_EGFR	PTL0187	Table	14.2-1.9.1	Supplementary estimand 3 - Repeated measures (MMRM) analysis of the change from baseline in eGFR (mL/min/1.73m2) to 24|months - Main study population	Full Analysis Set	N: Number of all participants included in the analysis (with non-missing baseline and covariates).|n: Number of participants with values non-missing/not imputed as per the intercurrent event (I/C) handling strategy.|I/Cs handled with hypothetical strategy: values after the intake of CS/IS, other newly approved drugs for IgAN and KRT initiation were imputed under J2R and|MAR for LNP023 and Placebo respectively; values after initiation of new background therapy for IgAN were imputed under MAR. Treatment discontinuation for|any reason was handled by the treatment policy strategy.|Change from baseline in eGFR was analyzed using an MMRM which included treatment, timepoint (as a categorical variable), randomization strata as fixed|effects, treatment*timepoint and timepoint*baseline eGFR as interaction terms and baseline eGFR as a fixed covariate.|Nominal p-value is displayed.		pgm\eff\	t_mmrm_egfr.sas			[yaoai1]yaoai1	[wangyi8r] wangyi8r		Validated / 			Friday, August 22, 2025 11:29:30 AM	reports\eff\	t142_1_9_01.rtf			[Most_Critical]Most_Critical	t_mmrm_egfr_qc.sas	Validated : wangyi8r												EFFICACY				User_defined	PGM /
+
+trakdata Table<[]>ptl0187<[]>14.2-1.9.1<[]>t142_1_9_01<[]>t_mmrm_egfr<[]>PRC<[]>Supplementary estimand 3 - Repeated measures (MMRM) analysis of the change from baseline in eGFR (mL/min/1.73m2) to 24|months - Main study population|Full Analysis Set<[]>N: Number of all participants included in the analysis (with non-missing baseline and covariates).|n: Number of participants with values non-missing/not imputed as per the intercurrent event (I/C) handling strategy.|I/Cs handled with hypothetical strategy: values after the intake of CS/IS	 other newly approved drugs for IgAN and KRT initiation were imputed under J2R and|MAR for LNP023 and Placebo respectively; values after initiation of new background therapy for IgAN were imputed under MAR. Treatment discontinuation for|any reason was handled by the treatment policy strategy.|Change from baseline in eGFR was analyzed using an MMRM which included treatment	 timepoint (as a categorical variable)	 randomization strata as fixed|effects	 treatment*timepoint and timepoint*baseline eGFR as interaction terms and baseline eGFR as a fixed covariate.|Nominal p-value is displayed.<[]>EFFICACY<[]>Most_Critical<[]>Validated /<[]>yaoai1<[]> wangyi8r<[]><[]>SAS								
